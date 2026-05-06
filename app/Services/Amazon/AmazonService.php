@@ -19,9 +19,10 @@ class AmazonService
 
     public function __construct()
     {
-        $this->endpoint      = rtrim(config('amazon.endpoint'), '/');
-        $this->marketplaceId = config('amazon.marketplace_id');
-        $this->sellerId      = config('amazon.seller_id');
+         $settings = app(\App\Services\SettingsService::class);
+		 $this->endpoint = rtrim($settings->get('amazon_sp_endpoint') ?? config('amazon.endpoint'), '/');
+		 $this->marketplaceId = $settings->amazonMarketplaceId() ?: config('amazon.marketplace_id');
+		 $this->sellerId      = $settings->amazonSellerId() ?: config('amazon.seller_id');
 
         $this->lwaClient = new Client([
             'base_uri' => config('amazon.lwa_token_url'),
@@ -41,12 +42,14 @@ class AmazonService
     public function getAccessToken(): string
     {
         return Cache::remember('amazon_lwa_token', now()->addMinutes(55), function () {
+			$settings = app(\App\Services\SettingsService::class);
+
             $response = $this->lwaClient->post(config('amazon.lwa_token_url'), [
                 'form_params' => [
                     'grant_type'    => 'refresh_token',
-                    'refresh_token' => config('amazon.refresh_token'),
-                    'client_id'     => config('amazon.client_id'),
-                    'client_secret' => config('amazon.client_secret'),
+                    'refresh_token' => $settings->amazonRefreshToken() ?: config('amazon.refresh_token'),
+					'client_id'     => $settings->amazonClientId() ?: config('amazon.client_id'),
+					'client_secret' => $settings->amazonClientSecret() ?: config('amazon.client_secret'),
                 ],
             ]);
 

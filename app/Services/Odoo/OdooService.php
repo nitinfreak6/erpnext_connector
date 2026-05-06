@@ -20,12 +20,13 @@ class OdooService
     private int $timeout;
     
 
-    public function __construct()
-    {
-        $this->url      = rtrim(config('odoo.url'), '/');
-        $this->db       = config('odoo.db');
-        $this->username = config('odoo.username');
-        $this->apiKey   = config('odoo.api_key');
+		public function __construct()
+	{
+		$settings       = app(\App\Services\SettingsService::class);
+		$this->url      = rtrim($settings->odooUrl() ?: config('odoo.url'), '/');
+		$this->db       = $settings->odooDb() ?: config('odoo.db');
+		$this->username = $settings->odooUsername() ?: config('odoo.username');
+		$this->apiKey   = $settings->odooApiKey() ?: config('odoo.api_key');
         $this->timeout  = config('odoo.timeout', 30);
 		$this->encoder = new Encoder();
         

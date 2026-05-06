@@ -15,11 +15,12 @@ class ShopifyService
     private const BUCKET_MAX     = 40;
     private const BUCKET_SAFE    = 35;
 
-    public function __construct()
-    {
-        $shop        = config('shopify.shop');
-        $apiVersion  = config('shopify.api_version');
-        $accessToken = config('shopify.access_token');
+	public function __construct()
+	{
+		$settings    = app(\App\Services\SettingsService::class);
+		$shop        = $settings->shopifyShop() ?: config('shopify.shop');
+		$apiVersion  = config('shopify.api_version');
+		$accessToken = $settings->shopifyAccessToken() ?: config('shopify.access_token');
 
         $this->baseUri = "https://{$shop}.myshopify.com/admin/api/{$apiVersion}/";
 

@@ -78,7 +78,11 @@ $status = $isPublished ? 'active' : 'draft';
 
         // Build options from attribute lines
         if (!empty($odooTemplate['attribute_line_ids'])) {
-            $payload['options'] = $this->buildOptions($attributeValues, $shopifyVariants);
+            // Build options from attribute lines
+			$builtOptions = $this->buildOptions($attributeValues, $shopifyVariants);
+			if (!empty($builtOptions)) {
+				$payload['options'] = $builtOptions;
+			}
         }
 
         return $payload;
@@ -141,6 +145,8 @@ $status = $isPublished ? 'active' : 'draft';
             }
         }
 
-        return array_values(array_filter($options));
+        // Filter out options with no values
+        $filtered = array_values(array_filter($options, fn($o) => !empty($o['values'])));
+        return $filtered;
     }
 }
