@@ -10,6 +10,7 @@ use App\Http\Controllers\Dashboard\SyncLogsController;
 use App\Http\Controllers\Dashboard\UsersController;
 use App\Http\Controllers\Dashboard\WebhooksController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Dashboard\MappingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -70,4 +71,13 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
         Route::put('/{user}',     [UsersController::class, 'update'])->name('.update');
         Route::delete('/{user}',  [UsersController::class, 'destroy'])->name('.destroy');
     });
+	
+	Route::middleware('role:manage-settings')->prefix('mappings')->name('.mappings')->group(function () {
+		Route::get('/{type}',                    [MappingController::class, 'index'])  ->name('.index');
+		Route::post('/{type}',                   [MappingController::class, 'store'])  ->name('.store');
+		Route::put('/{type}/{mapping}',          [MappingController::class, 'update']) ->name('.update');
+		Route::delete('/{type}/{mapping}',       [MappingController::class, 'destroy'])->name('.destroy');
+		Route::patch('/{type}/{mapping}/toggle', [MappingController::class, 'toggle']) ->name('.toggle');
+		Route::post('/{type}/import',            [MappingController::class, 'import']) ->name('.import');
+	});
 });

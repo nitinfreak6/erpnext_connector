@@ -2,6 +2,8 @@
 
 namespace App\Services\Amazon;
 
+use App\Exceptions\AmazonApiException;
+use App\Services\SettingsService;
 use Illuminate\Support\Facades\Log;
 
 class AmazonInventoryService
@@ -9,8 +11,9 @@ class AmazonInventoryService
     private const LISTINGS_VERSION = '2021-08-01';
 
     public function __construct(
-        private readonly AmazonService     $amazon,
+        private readonly AmazonService        $amazon,
         private readonly AmazonListingService $listings,
+        private readonly SettingsService      $settings,
     ) {}
 
     /**
@@ -19,7 +22,11 @@ class AmazonInventoryService
      */
     public function updateQuantity(string $sku, int $quantity): array
     {
-        if (config('amazon.fulfillment_channel') === 'FBA') {
+        // ✅ Read from DB via SettingsService, not config()
+        $fulfillmentChannel = $this->settings->get('amazon_fulfillment_channel')
+            ?? config('amazon.fulfillment_channel', 'FBM');
+
+        if (strtoupper($fulfillmentChannel) === 'FBA') {
             Log::debug("Amazon FBA mode — skipping inventory push for SKU {$sku}");
             return [];
         }
@@ -27,7 +34,9 @@ class AmazonInventoryService
         $sellerId      = $this->amazon->getSellerId();
         $marketplaceId = $this->amazon->getMarketplaceId();
 
-        $path = "/listings/" . self::LISTINGS_VERSION . "/items/{$sellerId}/" . rawurlencode($sku);
+        $path = "/listings/" . self::LISTINGS_VERSION
+              . "/items/{$sellerId}/" . rawurlencode($sku)
+              . "?marketplaceIds=" . rawurlencode($marketplaceId);
 
         $body = [
             'productType' => 'PRODUCT',
@@ -46,38 +55,19 @@ class AmazonInventoryService
             ],
         ];
 
-        // SP-API uses PATCH for partial updates
-        $token   = $this->amazon->getAccessToken();
-        $client  = new \GuzzleHttp\Client([
-            'base_uri' => rtrim(config('amazon.endpoint'), '/') . '/',
-            'timeout'  => config('amazon.timeout', 30),
-        ]);
-
+        // ✅ Use AmazonService::patch() — it uses the DB-configured endpoint + token
         try {
-            $response = $client->patch(ltrim($path, '/'), [
-                'headers' => [
-                    'x-amz-access-token' => $token,
-                    'x-amz-date'         => gmdate('Ymd\THis\Z'),
-                    'Content-Type'       => 'application/json',
-                ],
-                'query' => ['marketplaceIds' => $marketplaceId],
-                'json'  => $body,
-            ]);
-
-            $result = json_decode((string) $response->getBody(), true) ?? [];
+            $result = $this->amazon->patch($path, $body);
 
             Log::info("Amazon inventory updated: SKU={$sku} qty={$quantity}");
 
             return $result;
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
-            $status   = $e->getResponse()->getStatusCode();
-            $respBody = json_decode((string) $e->getResponse()->getBody(), true);
-
-            throw new \App\Exceptions\AmazonApiException(
-                "Amazon inventory PATCH failed for SKU {$sku}: HTTP {$status}",
-                $status,
+        } catch (AmazonApiException $e) {
+            throw new AmazonApiException(
+                "Amazon inventory PATCH failed for SKU {$sku}: HTTP {$e->getHttpStatus()}",
+                $e->getHttpStatus(),
                 $path,
-                $respBody['errors'] ?? null,
+                $e->getErrors(),
                 $e
             );
         }

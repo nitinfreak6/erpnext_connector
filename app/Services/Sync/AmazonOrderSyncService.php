@@ -2,9 +2,11 @@
 
 namespace App\Services\Sync;
 
+use App\Models\ChannelMapping;
 use App\Models\SyncLog;
 use App\Models\SyncMapping;
 use App\Services\Amazon\AmazonOrderService;
+use App\Services\ChannelMappingService;
 use App\Services\MappingService;
 use App\Services\Odoo\OdooCustomerService;
 use App\Services\Odoo\OdooOrderService;
@@ -15,10 +17,11 @@ class AmazonOrderSyncService
     const ENTITY_ORDER = 'amazon_order';
 
     public function __construct(
-        private readonly AmazonOrderService  $amazonOrders,
-        private readonly OdooOrderService    $odooOrders,
-        private readonly OdooCustomerService $odooCustomers,
-        private readonly MappingService      $mappings,
+        private readonly AmazonOrderService    $amazonOrders,
+        private readonly OdooOrderService      $odooOrders,
+        private readonly OdooCustomerService   $odooCustomers,
+        private readonly MappingService        $mappings,
+        private readonly ChannelMappingService $channelMappings,
     ) {}
 
     /**
@@ -28,7 +31,6 @@ class AmazonOrderSyncService
     {
         $amazonOrderId = $amazonOrder['AmazonOrderId'];
 
-        // Idempotency
         if ($this->mappings->findByShopifyId(self::ENTITY_ORDER, $amazonOrderId)) {
             Log::info("Amazon order {$amazonOrderId} already in Odoo, skipping.");
             return 0;
@@ -47,32 +49,72 @@ class AmazonOrderSyncService
             $partnerId  = $this->resolveOrCreatePartner($amazonOrder);
             $orderLines = $this->buildOrderLines($orderItems);
 
-            // Add shipping if present
+            // Shipping line
             $shippingPrice = (float) ($amazonOrder['OrderTotal']['Amount'] ?? 0)
-                           - array_sum(array_map(fn($i) => (float) ($i['ItemPrice']['Amount'] ?? 0), $orderItems));
+                - array_sum(array_map(fn($i) => (float) ($i['ItemPrice']['Amount'] ?? 0), $orderItems));
 
             if ($shippingPrice > 0) {
-                $orderLines[] = [0, 0, [
+                $shippingLine = [0, 0, [
                     'name'            => 'Amazon Shipping',
                     'product_uom_qty' => 1,
                     'price_unit'      => round($shippingPrice, 2),
                 ]];
+
+                // ── Wire: Shipping mapping → Odoo delivery product ───────
+                $shippingProdId = $this->channelMappings->odooShippingProduct(
+                    $amazonOrder['ShipServiceLevel'] ?? 'Amazon Shipping'
+                );
+                if ($shippingProdId) {
+                    $shippingLine[2]['product_id'] = (int) $shippingProdId;
+                }
+
+                $orderLines[] = $shippingLine;
             }
 
             $orderData = [
-                'client_order_ref' => $amazonOrderId,
-                'origin'           => 'Amazon #' . $amazonOrderId,
-                'partner_id'       => $partnerId,
+                'client_order_ref'    => $amazonOrderId,
+                'origin'              => 'Amazon #' . $amazonOrderId,
+                'partner_id'          => $partnerId,
                 'partner_invoice_id'  => $partnerId,
                 'partner_shipping_id' => $partnerId,
-                'order_line'       => $orderLines,
-                'note'             => 'Amazon channel: ' . ($amazonOrder['SalesChannel'] ?? ''),
-                'date_order'       => date('Y-m-d H:i:s', strtotime($amazonOrder['PurchaseDate'])),
+                'order_line'          => $orderLines,
+                'note'                => 'Amazon channel: ' . ($amazonOrder['SalesChannel'] ?? ''),
+                'date_order'          => date('Y-m-d H:i:s', strtotime($amazonOrder['PurchaseDate'])),
             ];
 
-            $odooOrderId = $this->odooOrders->createFromShopify($orderData); // reuse same method
+            // ── Wire: Sales Order Type mapping ───────────────────────────
+            $orderTypeId = $this->channelMappings->odooAmazonSalesOrderType();
+            if ($orderTypeId) {
+                $orderData['type_id'] = (int) $orderTypeId;
+            }
 
-            // Auto-confirm if payment confirmed
+            // ── Wire: Sales Rep mapping ──────────────────────────────────
+            $salesRepId = $this->channelMappings->odooAmazonSalesRep();
+            if ($salesRepId) {
+                $orderData['user_id'] = (int) $salesRepId;
+            }
+
+            // ── Wire: Pricelist mapping (by Amazon currency) ─────────────
+            $currency    = $amazonOrder['OrderTotal']['CurrencyCode'] ?? '';
+            $pricelistId = $currency
+                ? $this->channelMappings->odooPricelist($currency, ChannelMapping::CHANNEL_AMAZON)
+                : null;
+            if ($pricelistId) {
+                $orderData['pricelist_id'] = (int) $pricelistId;
+            }
+
+            // ── Wire: Channel mapping → Odoo sales team ──────────────────
+            $teamId = $this->channelMappings->resolve(
+                ChannelMapping::TYPE_CHANNEL,
+                ChannelMapping::CHANNEL_AMAZON,
+                'amazon'
+            );
+            if ($teamId) {
+                $orderData['team_id'] = (int) $teamId;
+            }
+
+            $odooOrderId = $this->odooOrders->createFromShopify($orderData);
+
             if (in_array($amazonOrder['OrderStatus'] ?? '', ['Unshipped', 'PartiallyShipped', 'Shipped'])) {
                 $this->odooOrders->confirmOrder($odooOrderId);
             }
@@ -83,7 +125,6 @@ class AmazonOrderSyncService
             ]);
 
             $log->markSuccess(json_encode(['odoo_order_id' => $odooOrderId]));
-
             Log::info("Amazon order {$amazonOrderId} → Odoo #{$odooOrderId}");
 
             return $odooOrderId;
@@ -93,17 +134,18 @@ class AmazonOrderSyncService
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ────────────────────────────────────────────────────────────────────
+
     private function resolveOrCreatePartner(array $amazonOrder): int
     {
         $address = $amazonOrder['ShippingAddress'] ?? [];
         $email   = $amazonOrder['BuyerInfo']['BuyerEmail'] ?? '';
 
-        // Try lookup by email first
         if ($email && !str_contains($email, 'marketplace.amazon')) {
             $existing = $this->odooCustomers->findByEmail($email);
-            if ($existing) {
-                return $existing['id'];
-            }
+            if ($existing) return $existing['id'];
         }
 
         $countryId = null;
@@ -111,7 +153,6 @@ class AmazonOrderSyncService
 
         if (!empty($address['CountryCode'])) {
             $countryId = $this->odooCustomers->resolveCountry($address['CountryCode']);
-
             if ($countryId && !empty($address['StateOrRegion'])) {
                 $stateId = $this->odooCustomers->resolveState($countryId, $address['StateOrRegion']);
             }
@@ -128,12 +169,8 @@ class AmazonOrderSyncService
             'customer_rank' => 1,
         ];
 
-        if ($countryId) {
-            $partnerData['country_id'] = $countryId;
-        }
-        if ($stateId) {
-            $partnerData['state_id'] = $stateId;
-        }
+        if ($countryId) $partnerData['country_id'] = $countryId;
+        if ($stateId)   $partnerData['state_id']   = $stateId;
 
         return $this->odooCustomers->create($partnerData);
     }
@@ -143,15 +180,13 @@ class AmazonOrderSyncService
         $lines = [];
 
         foreach ($orderItems as $item) {
-            $sku = $item['SellerSKU'] ?? '';
-
-            // Try to resolve Odoo product from Amazon variant mapping
+            $sku            = $item['SellerSKU'] ?? '';
             $variantMapping = $sku
                 ? $this->mappings->findByShopifyId(AmazonProductSyncService::ENTITY_VARIANT, $sku)
                 : null;
 
             $price = (float) ($item['ItemPrice']['Amount'] ?? 0);
-            $qty   = (int) ($item['QuantityOrdered'] ?? 1);
+            $qty   = (int)   ($item['QuantityOrdered'] ?? 1);
 
             $line = [0, 0, [
                 'name'            => $item['Title'] ?? ($sku ?: 'Amazon Product'),
@@ -163,9 +198,37 @@ class AmazonOrderSyncService
                 $line[2]['product_id'] = (int) $variantMapping->odoo_id;
             }
 
+            // ── Wire: Tax mapping ────────────────────────────────────────
+            $taxIds = $this->resolveTaxIds($item['ItemTax'] ?? [], ChannelMapping::CHANNEL_AMAZON);
+            if ($taxIds) {
+                $line[2]['tax_id'] = [[6, 0, $taxIds]];
+            }
+
             $lines[] = $line;
         }
 
         return $lines;
+    }
+
+    /**
+     * Resolve Amazon tax data → Odoo tax IDs via Tax mapping.
+     */
+    private function resolveTaxIds(mixed $itemTax, string $channel): array
+    {
+        if (empty($itemTax)) return [];
+
+        // Amazon ItemTax can be a single object or array
+        $taxLines = isset($itemTax['Amount']) ? [$itemTax] : (array) $itemTax;
+        $taxIds   = [];
+
+        foreach ($taxLines as $taxLine) {
+            $title = $taxLine['TaxCollectionModel'] ?? $taxLine['Type'] ?? 'Tax';
+            $taxId = $this->channelMappings->odooAmazonTax($title);
+            if ($taxId) {
+                $taxIds[] = (int) $taxId;
+            }
+        }
+
+        return array_unique($taxIds);
     }
 }

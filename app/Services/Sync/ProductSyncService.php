@@ -5,6 +5,7 @@ namespace App\Services\Sync;
 use App\Exceptions\ShopifyApiException;
 use App\Models\SyncLog;
 use App\Models\SyncMapping;
+use App\Services\ChannelMappingService;
 use App\Services\MappingService;
 use App\Services\Odoo\OdooProductService;
 use App\Services\Shopify\ShopifyProductService;
@@ -12,43 +13,45 @@ use Illuminate\Support\Facades\Log;
 
 class ProductSyncService
 {
-    private OdooProductService $odooProducts;
-    private ShopifyProductService $shopifyProducts;
-    private MappingService $mappings;
-
     public function __construct(
-        OdooProductService $odooProducts,
-        ShopifyProductService $shopifyProducts,
-        MappingService $mappings
-    ) {
-        $this->odooProducts = $odooProducts;
-        $this->shopifyProducts = $shopifyProducts;
-        $this->mappings = $mappings;
-    }
+        private readonly OdooProductService    $odooProducts,
+        private readonly ShopifyProductService $shopifyProducts,
+        private readonly MappingService        $mappings,
+        private readonly ChannelMappingService $channelMappings,
+    ) {}
 
     /**
      * Sync a single Odoo product template to Shopify.
-     * Returns the Shopify product ID.
      */
     public function syncProduct(array $odooTemplate): string
     {
-        $odooId    = (string) $odooTemplate['id'];
-        $variantIds = $odooTemplate['product_variant_ids'] ?? [];
+        $odooId = (string) $odooTemplate['id'];
 
-        // Fetch variants
+        // Fetch variants and attribute values
         $variants = $this->odooProducts->getVariantsForTemplates([$odooTemplate['id']]);
 
-        // Collect attribute value IDs
         $avIds = [];
         foreach ($variants as $v) {
             $avIds = array_merge($avIds, $v['product_template_attribute_value_ids'] ?? []);
         }
-        $attributeValues = $avIds ? $this->odooProducts->getAttributeValues(array_unique($avIds)) : [];
+        $attributeValues = $avIds
+            ? $this->odooProducts->getAttributeValues(array_unique($avIds))
+            : [];
 
-        // Build payload
-        $payload = $this->shopifyProducts->buildPayload($odooTemplate, $variants, $attributeValues);
+        // ── Wire: remap size attribute values via ProductSize mapping ────
+        $attributeValues = $this->remapSizeAttributes($attributeValues);
 
-        // Check if already mapped
+        // ── Wire: resolve Shopify product_type via Category mapping ──────
+        $shopifyProductType = $this->resolveProductType($odooTemplate);
+
+        // Build payload (pass resolved product type so ShopifyProductService uses it)
+        $payload = $this->shopifyProducts->buildPayload(
+            array_merge($odooTemplate, ['_shopify_product_type' => $shopifyProductType]),
+            $variants,
+            $attributeValues
+        );
+
+        // Check existing mapping
         $mapping = $this->mappings->findByOdooId(SyncMapping::TYPE_PRODUCT, $odooId);
 
         $log = SyncLog::create([
@@ -66,10 +69,9 @@ class ProductSyncService
                     $shopifyProduct = $this->shopifyProducts->update($mapping->shopify_id, $payload);
                     $action = 'update';
                 } catch (ShopifyApiException $e) {
-                    // Self-heal stale mappings (e.g. product deleted in Shopify).
                     if ($e->getHttpStatus() === 404) {
-                        Log::warning('Shopify product not found for mapped ID; creating new product.', [
-                            'odoo_id' => $odooId,
+                        Log::warning('Shopify product not found for mapped ID; creating new.', [
+                            'odoo_id'    => $odooId,
                             'shopify_id' => $mapping->shopify_id,
                         ]);
                         $shopifyProduct = $this->shopifyProducts->create($payload);
@@ -85,17 +87,14 @@ class ProductSyncService
 
             $shopifyProductId = (string) $shopifyProduct['id'];
 
-            // Upsert main product mapping
             $this->mappings->upsert(SyncMapping::TYPE_PRODUCT, $odooId, $shopifyProductId, [
-                'shopify_handle'  => $shopifyProduct['handle'] ?? null,
-                'last_synced_at'  => now(),
+                'shopify_handle' => $shopifyProduct['handle'] ?? null,
+                'last_synced_at' => now(),
             ]);
 
-            // Upsert variant mappings (for inventory tracking)
             $this->syncVariantMappings($variants, $shopifyProduct['variants'] ?? []);
 
             $log->markSuccess(json_encode(['shopify_product_id' => $shopifyProductId]));
-
             Log::info("Product synced: Odoo #{$odooId} → Shopify #{$shopifyProductId}", ['action' => $action]);
 
             return $shopifyProductId;
@@ -105,25 +104,78 @@ class ProductSyncService
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    // Mapping helpers
+    // ────────────────────────────────────────────────────────────────────
+
+    /**
+     * Resolve Shopify product_type from Odoo category via Category mapping.
+     * Falls back to Odoo category name if no mapping found.
+     */
+    private function resolveProductType(array $odooTemplate): ?string
+    {
+        $categoryId = is_array($odooTemplate['categ_id'] ?? null)
+            ? (string) $odooTemplate['categ_id'][0]
+            : (string) ($odooTemplate['categ_id'] ?? '');
+
+        if (!$categoryId) {
+            return null;
+        }
+
+        // Try mapped value first
+        $mapped = $this->channelMappings->shopifyCategory($categoryId);
+
+        if ($mapped) {
+            return $mapped;
+        }
+
+        // Fall back to Odoo category name (second element of array)
+        return is_array($odooTemplate['categ_id'] ?? null)
+            ? ($odooTemplate['categ_id'][1] ?? null)
+            : null;
+    }
+
+    /**
+     * Remap size attribute values using ProductSize mapping.
+     * Translates Odoo size labels (e.g. "92/98") to Shopify labels (e.g. "2-3T").
+     */
+    private function remapSizeAttributes(array $attributeValues): array
+    {
+        foreach ($attributeValues as &$av) {
+            $attrName = strtolower($av['attribute_id'][1] ?? '');
+
+            // Only remap size-type attributes
+            if (!in_array($attrName, ['size', 'sizes', 'shoe size', 'clothing size'])) {
+                continue;
+            }
+
+            $odooValue  = $av['name'] ?? '';
+            $shopifyVal = $this->channelMappings->shopifySize($odooValue);
+
+            if ($shopifyVal) {
+                $av['_mapped_name'] = $shopifyVal; // ShopifyProductService should use this if present
+            }
+        }
+        unset($av);
+
+        return $attributeValues;
+    }
+
     /**
      * Match Odoo variants to Shopify variants by SKU and save mappings.
      */
     private function syncVariantMappings(array $odooVariants, array $shopifyVariants): void
     {
-        // Index Shopify variants by SKU and barcode
-        $shopifyBySku = [];
+        $shopifyBySku     = [];
         $shopifyByBarcode = [];
+
         foreach ($shopifyVariants as $sv) {
-            if (!empty($sv['sku'])) {
-                $shopifyBySku[$sv['sku']] = $sv;
-            }
-            if (!empty($sv['barcode'])) {
-                $shopifyByBarcode[$sv['barcode']] = $sv;
-            }
+            if (!empty($sv['sku']))     $shopifyBySku[$sv['sku']]         = $sv;
+            if (!empty($sv['barcode'])) $shopifyByBarcode[$sv['barcode']] = $sv;
         }
 
         foreach ($odooVariants as $odooVariant) {
-            $sku = $odooVariant['default_code'] ?? '';
+            $sku     = $odooVariant['default_code'] ?? '';
             $barcode = $odooVariant['barcode'] ?? '';
 
             if ($sku && isset($shopifyBySku[$sku])) {
@@ -131,7 +183,6 @@ class ProductSyncService
             } elseif ($barcode && isset($shopifyByBarcode[$barcode])) {
                 $sv = $shopifyByBarcode[$barcode];
             } elseif (count($odooVariants) === 1 && count($shopifyVariants) === 1) {
-                // Safe fallback: single-variant products with missing SKU/barcode.
                 $sv = $shopifyVariants[0];
             } else {
                 continue;

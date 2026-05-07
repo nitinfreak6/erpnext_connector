@@ -106,6 +106,11 @@ class AmazonService
     {
         return $this->request('DELETE', $path);
     }
+	
+	public function patch(string $path, array $body): array
+	{
+		return $this->request('PATCH', $path, ['json' => $body]);
+	}
 
     /**
      * Upload content to an Amazon document URL (for feed documents).

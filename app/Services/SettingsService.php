@@ -140,4 +140,10 @@ class SettingsService
     {
         return $this->get('amazon_marketplace_id') ?? env('AMAZON_MARKETPLACE_ID', 'ATVPDKIKX0DER');
     }
+	
+	public function odooLocationMap(): array
+	{
+		$raw = $this->get('odoo_location_map') ?? '{}';
+		return json_decode($raw, true) ?? [];
+	}
 }
