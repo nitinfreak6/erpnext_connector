@@ -4,7 +4,6 @@ namespace App\Console\Commands;
 
 use App\Jobs\Odoo\FetchOdooProductsJob;
 use App\Services\Odoo\OdooProductService;
-use App\Services\Sync\ProductSyncService;
 use Illuminate\Console\Command;
 
 class SyncProducts extends Command
@@ -14,9 +13,9 @@ class SyncProducts extends Command
                             {--limit=0 : Max number of products to process (0 = unlimited)}
                             {--dry-run : Print products without dispatching jobs}';
 
-    protected $description = 'Sync Odoo products → Shopify';
+    protected $description = 'Sync Odoo products → Shopify (fetches once, caches JSON, no repeat Odoo calls)';
 
-    public function handle(OdooProductService $odooProducts, ProductSyncService $syncService): int
+    public function handle(OdooProductService $odooProducts): int
     {
         $full   = $this->option('full');
         $limit  = (int) $this->option('limit');
@@ -25,47 +24,32 @@ class SyncProducts extends Command
         $this->info('Starting product sync' . ($full ? ' (FULL)' : '') . ($dryRun ? ' [DRY RUN]' : '') . '...');
 
         if ($dryRun) {
-            $products = $full
-                ? $odooProducts->getAllActive(0, $limit ?: 100)
-                : $odooProducts->getModifiedSince('2000-01-01 00:00:00');
+            $products = $odooProducts->getAllActive(0, $limit ?: 100);
 
             $this->table(['ID', 'Name', 'Write Date'], array_map(fn($p) => [
-                $p['id'], $p['name'], $p['write_date'],
+                $p['id'], $p['name'], $p['write_date'] ?? '',
             ], $products));
 
             $this->info(count($products) . ' product(s) would be synced.');
             return self::SUCCESS;
         }
 
-        if ($full || $limit) {
-            $offset = 0;
-            $total  = 0;
-            $batch  = $limit ?: 100;
+        // ── Always dispatch FetchOdooProductsJob ─────────────────────────
+        // This job:
+        //   1. Fetches products from Odoo ONCE
+        //   2. Saves each to storage/app/products/{id}.json
+        //   3. Dispatches PushProductToShopifyJob(odooId) per product
+        //   4. PushProductToShopifyJob reads from JSON — zero further Odoo calls
+        //
+        // --full flag is passed through so the job ignores the write_date cursor
+        FetchOdooProductsJob::dispatch(
+            fullSync: $full || $limit > 0,
+            shopify:  true,
+            amazon:   false,   // sync:products is Shopify only
+        );
 
-            do {
-                $products = $odooProducts->getAllActive($offset, $batch);
-
-                foreach ($products as $product) {
-                    try {
-                        $shopifyId = $syncService->syncProduct($product);
-                        $this->line("  ✔ #{$product['id']} {$product['name']} → Shopify #{$shopifyId}");
-                    } catch (\Throwable $e) {
-                        $this->error("  ✘ #{$product['id']} {$product['name']}: " . $e->getMessage());
-                    }
-                    $total++;
-                    if ($limit && $total >= $limit) {
-                        break 2;
-                    }
-                }
-
-                $offset += count($products);
-            } while (count($products) === $batch && (!$limit || $total < $limit));
-
-            $this->info("Done. Synced {$total} product(s).");
-        } else {
-            FetchOdooProductsJob::dispatchSync(false);
-            $this->info('Sync job dispatched to queue.');
-        }
+        $this->info('FetchOdooProductsJob dispatched to queue.');
+        $this->line("Run <info>php artisan queue:work --queue=sync</info> to process.");
 
         return self::SUCCESS;
     }

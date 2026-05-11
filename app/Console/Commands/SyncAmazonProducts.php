@@ -2,9 +2,8 @@
 
 namespace App\Console\Commands;
 
-use App\Jobs\Amazon\PushProductToAmazonJob;
+use App\Jobs\Odoo\FetchOdooProductsJob;
 use App\Services\Odoo\OdooProductService;
-use App\Services\Sync\AmazonProductSyncService;
 use Illuminate\Console\Command;
 
 class SyncAmazonProducts extends Command
@@ -14,9 +13,9 @@ class SyncAmazonProducts extends Command
                             {--limit=0 : Max products to process}
                             {--dry-run : Show what would sync without pushing}';
 
-    protected $description = 'Sync Odoo products → Amazon listings';
+    protected $description = 'Sync Odoo products → Amazon (fetches once, caches JSON, no repeat Odoo calls)';
 
-    public function handle(OdooProductService $odooProducts, AmazonProductSyncService $syncService): int
+    public function handle(OdooProductService $odooProducts): int
     {
         $full   = $this->option('full');
         $limit  = (int) $this->option('limit');
@@ -24,39 +23,34 @@ class SyncAmazonProducts extends Command
 
         $this->info('Amazon product sync' . ($full ? ' (FULL)' : '') . ($dryRun ? ' [DRY RUN]' : ''));
 
-        $offset = 0;
-        $total  = 0;
-        $batch  = $limit ?: 100;
+        if ($dryRun) {
+            $products = $odooProducts->getAllActive(0, $limit ?: 100);
 
-        do {
-            $products = $odooProducts->getAllActive($offset, $batch);
+            $this->table(['ID', 'Name'], array_map(fn($p) => [
+                $p['id'], $p['name'],
+            ], $products));
 
-            foreach ($products as $product) {
-                if ($dryRun) {
-                    $this->line("  Would sync: #{$product['id']} {$product['name']} (SKUs: "
-                        . implode(',', array_column($product['product_variant_ids'] ?? [], null)) . ')');
-                } else {
-                    try {
-                        $result = $syncService->syncProduct($product);
-                        $synced = implode(',', $result['synced']);
-                        $failed = implode(',', $result['failed']);
-                        $this->line("  ✔ #{$product['id']} {$product['name']} → SKUs: {$synced}"
-                            . ($failed ? " | FAILED: {$failed}" : ''));
-                    } catch (\Throwable $e) {
-                        $this->error("  ✘ #{$product['id']}: " . $e->getMessage());
-                    }
-                }
+            $this->info(count($products) . ' product(s) would be synced.');
+            return self::SUCCESS;
+        }
 
-                $total++;
-                if ($limit && $total >= $limit) {
-                    break 2;
-                }
-            }
+        // ── Always dispatch FetchOdooProductsJob ─────────────────────────
+        // This job:
+        //   1. Fetches products from Odoo ONCE
+        //   2. Saves each to storage/app/products/{id}.json
+        //   3. Dispatches PushProductToAmazonJob(odooId) per product
+        //   4. PushProductToAmazonJob reads from JSON — zero further Odoo calls
+        //
+        // If JSON already exists for a product (from a previous sync:products run),
+        // Odoo is still called once here to refresh the cache before pushing to Amazon.
+        FetchOdooProductsJob::dispatch(
+            fullSync: $full || $limit > 0,
+            shopify:  false,   // sync:amazon-products is Amazon only
+            amazon:   true,
+        );
 
-            $offset += count($products);
-        } while (count($products) === $batch && (!$limit || $total < $limit));
-
-        $this->info("Done. Processed {$total} product(s).");
+        $this->info('FetchOdooProductsJob dispatched to queue (Amazon only).');
+        $this->line("Run <info>php artisan queue:work --queue=sync</info> to process.");
 
         return self::SUCCESS;
     }

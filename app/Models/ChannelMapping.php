@@ -54,6 +54,7 @@ class ChannelMapping extends Model
             self::TYPE_SALES_REP        => 'Sales Rep Mapping',
             self::TYPE_PRODUCT_SIZE     => 'Product Size List Mapping',
             self::TYPE_TAX              => 'Tax Mapping',
+		    'product_field' => 'Product Field Mapping (Shopify)',
         ];
     }
 
@@ -70,6 +71,7 @@ class ChannelMapping extends Model
             self::TYPE_SALES_REP        => 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
             self::TYPE_PRODUCT_SIZE     => 'M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4',
             self::TYPE_TAX              => 'M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z',
+			'product_field' => '🔗',
         ];
     }
 

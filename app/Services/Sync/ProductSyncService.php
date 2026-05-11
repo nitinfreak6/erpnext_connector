@@ -22,21 +22,37 @@ class ProductSyncService
 
     /**
      * Sync a single Odoo product template to Shopify.
+     *
+     * Pass $cachedVariants and $cachedAttributeValues from the JSON cache
+     * to avoid calling Odoo again. If not provided, falls back to Odoo API.
      */
-    public function syncProduct(array $odooTemplate): string
-    {
+    public function syncProduct(
+        array  $odooTemplate,
+        ?array $cachedVariants         = null,
+        ?array $cachedAttributeValues  = null,
+    ): string {
         $odooId = (string) $odooTemplate['id'];
 
-        // Fetch variants and attribute values
-        $variants = $this->odooProducts->getVariantsForTemplates([$odooTemplate['id']]);
-
-        $avIds = [];
-        foreach ($variants as $v) {
-            $avIds = array_merge($avIds, $v['product_template_attribute_value_ids'] ?? []);
+        // ── Use cached data if provided, otherwise fall back to Odoo API ─
+        if ($cachedVariants !== null) {
+            $variants = $cachedVariants;
+            Log::debug("ProductSyncService: using cached variants for #{$odooId} (no Odoo call)");
+        } else {
+            $variants = $this->odooProducts->getVariantsForTemplates([$odooTemplate['id']]);
+            Log::debug("ProductSyncService: fetched variants from Odoo for #{$odooId}");
         }
-        $attributeValues = $avIds
-            ? $this->odooProducts->getAttributeValues(array_unique($avIds))
-            : [];
+
+        if ($cachedAttributeValues !== null) {
+            $attributeValues = $cachedAttributeValues;
+        } else {
+            $avIds = [];
+            foreach ($variants as $v) {
+                $avIds = array_merge($avIds, $v['product_template_attribute_value_ids'] ?? []);
+            }
+            $attributeValues = $avIds
+                ? $this->odooProducts->getAttributeValues(array_unique($avIds))
+                : [];
+        }
 
         // ── Wire: remap size attribute values via ProductSize mapping ────
         $attributeValues = $this->remapSizeAttributes($attributeValues);
@@ -44,7 +60,7 @@ class ProductSyncService
         // ── Wire: resolve Shopify product_type via Category mapping ──────
         $shopifyProductType = $this->resolveProductType($odooTemplate);
 
-        // Build payload (pass resolved product type so ShopifyProductService uses it)
+        // Build payload
         $payload = $this->shopifyProducts->buildPayload(
             array_merge($odooTemplate, ['_shopify_product_type' => $shopifyProductType]),
             $variants,
@@ -104,47 +120,30 @@ class ProductSyncService
         }
     }
 
-    // ────────────────────────────────────────────────────────────────────
-    // Mapping helpers
-    // ────────────────────────────────────────────────────────────────────
+    // ── Private helpers (unchanged) ──────────────────────────────────────
 
-    /**
-     * Resolve Shopify product_type from Odoo category via Category mapping.
-     * Falls back to Odoo category name if no mapping found.
-     */
     private function resolveProductType(array $odooTemplate): ?string
     {
         $categoryId = is_array($odooTemplate['categ_id'] ?? null)
             ? (string) $odooTemplate['categ_id'][0]
             : (string) ($odooTemplate['categ_id'] ?? '');
 
-        if (!$categoryId) {
-            return null;
-        }
+        if (!$categoryId) return null;
 
-        // Try mapped value first
         $mapped = $this->channelMappings->shopifyCategory($categoryId);
 
-        if ($mapped) {
-            return $mapped;
-        }
+        if ($mapped) return $mapped;
 
-        // Fall back to Odoo category name (second element of array)
         return is_array($odooTemplate['categ_id'] ?? null)
             ? ($odooTemplate['categ_id'][1] ?? null)
             : null;
     }
 
-    /**
-     * Remap size attribute values using ProductSize mapping.
-     * Translates Odoo size labels (e.g. "92/98") to Shopify labels (e.g. "2-3T").
-     */
     private function remapSizeAttributes(array $attributeValues): array
     {
         foreach ($attributeValues as &$av) {
             $attrName = strtolower($av['attribute_id'][1] ?? '');
 
-            // Only remap size-type attributes
             if (!in_array($attrName, ['size', 'sizes', 'shoe size', 'clothing size'])) {
                 continue;
             }
@@ -153,7 +152,7 @@ class ProductSyncService
             $shopifyVal = $this->channelMappings->shopifySize($odooValue);
 
             if ($shopifyVal) {
-                $av['_mapped_name'] = $shopifyVal; // ShopifyProductService should use this if present
+                $av['_mapped_name'] = $shopifyVal;
             }
         }
         unset($av);
@@ -161,9 +160,6 @@ class ProductSyncService
         return $attributeValues;
     }
 
-    /**
-     * Match Odoo variants to Shopify variants by SKU and save mappings.
-     */
     private function syncVariantMappings(array $odooVariants, array $shopifyVariants): void
     {
         $shopifyBySku     = [];

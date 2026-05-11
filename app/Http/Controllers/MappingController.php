@@ -7,6 +7,7 @@ use App\Models\ChannelMapping;
 use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\View\View;
+use Illuminate\Support\Facades\Cache;
 
 class MappingController extends Controller
 {
@@ -52,6 +53,9 @@ class MappingController extends Controller
      */
     public function store(Request $request, string $type): RedirectResponse
     {
+		if ($type === 'product_field') {
+			Cache::forget('product_field_mappings_shopify');
+		}
         abort_unless(in_array($type, $this->validTypes), 404);
 
         $data = $request->validate([
@@ -76,6 +80,9 @@ class MappingController extends Controller
      */
     public function update(Request $request, string $type, ChannelMapping $mapping): RedirectResponse
     {
+		if ($type === 'product_field') {
+			Cache::forget('product_field_mappings_shopify');
+		}
         abort_unless($mapping->type === $type, 404);
 
         $data = $request->validate([
@@ -99,6 +106,9 @@ class MappingController extends Controller
      */
     public function destroy(string $type, ChannelMapping $mapping): RedirectResponse
     {
+		if ($type === 'product_field') {
+			Cache::forget('product_field_mappings_shopify');
+		}
         abort_unless($mapping->type === $type, 404);
         $mapping->delete();
 
@@ -110,6 +120,9 @@ class MappingController extends Controller
      */
     public function toggle(string $type, ChannelMapping $mapping): RedirectResponse
     {
+		if ($type === 'product_field') {
+			Cache::forget('product_field_mappings_shopify');
+		}
         abort_unless($mapping->type === $type, 404);
         $mapping->update(['is_active' => !$mapping->is_active]);
 

@@ -11,75 +11,89 @@ use Illuminate\Support\Facades\Log;
 
 class AmazonProductSyncService
 {
-    // Entity types for Amazon (namespaced to avoid collisions with Shopify mappings)
     const ENTITY_PRODUCT = 'amazon_product';
     const ENTITY_VARIANT = 'amazon_variant';
 
     public function __construct(
-        private readonly OdooProductService  $odooProducts,
+        private readonly OdooProductService   $odooProducts,
         private readonly AmazonListingService $amazonListings,
-        private readonly MappingService      $mappings,
+        private readonly MappingService       $mappings,
     ) {}
 
     /**
-     * Sync a single Odoo product template to Amazon as one or more listings.
-     * Each variant becomes a separate listing (identified by SKU).
+     * Sync a single Odoo product template to Amazon.
      *
-     * Amazon requires at least one variant with a SKU and either a barcode or ASIN.
+     * Pass $cachedVariants and $cachedProductAttributes from the JSON cache
+     * to avoid calling Odoo again. If not provided, falls back to Odoo API.
      */
-    public function syncProduct(array $odooTemplate): array
-    {
-        $odooId  = (string) $odooTemplate['id'];
-        $synced  = [];
-        $failed  = [];
+    public function syncProduct(
+        array  $odooTemplate,
+        ?array $cachedVariants           = null,
+        ?array $cachedProductAttributes  = null,
+    ): array {
+        $odooId = (string) $odooTemplate['id'];
+        $synced = [];
+        $failed = [];
 
-        // Fetch variants
-        $variants = $this->odooProducts->getVariantsForTemplates([$odooTemplate['id']]);
+        // ── Use cached data if provided, otherwise fall back to Odoo API ─
+        if ($cachedVariants !== null) {
+            $variants = $cachedVariants;
+            Log::debug("AmazonProductSyncService: using cached variants for #{$odooId} (no Odoo call)");
+        } else {
+            $variants = $this->odooProducts->getVariantsForTemplates([$odooTemplate['id']]);
+            Log::debug("AmazonProductSyncService: fetched variants from Odoo for #{$odooId}");
+        }
 
         if (empty($variants)) {
             Log::warning("Amazon: Odoo product #{$odooId} has no variants, skipping.");
             return ['synced' => [], 'failed' => []];
         }
 
+        // Pre-fetch product attributes once (from cache or Odoo)
+        // Done outside the variant loop to avoid N Odoo calls
+        $productAttributes = $cachedProductAttributes
+            ?? $this->odooProducts->getProductAttributes((int) $odooTemplate['id']);
+
         foreach ($variants as $variant) {
             $sku = $variant['default_code'] ?? '';
 
             if (!$sku) {
-                Log::warning("Amazon: Odoo variant #{$variant['id']} has no SKU (default_code), skipping.");
+                Log::warning("Amazon: Odoo variant #{$variant['id']} has no SKU, skipping.");
                 $failed[] = $variant['id'];
                 continue;
             }
 
+            $existingMapping = $this->mappings->findByOdooId(self::ENTITY_VARIANT, (string) $variant['id']);
+
             $log = SyncLog::create([
-                'direction'       => SyncLog::DIRECTION_ODOO_TO_SHOPIFY, // reuse direction enum
-                'entity_type'     => self::ENTITY_VARIANT,
-                'entity_id'       => (string) $variant['id'],
-                'action'          => $this->mappings->findByOdooId(self::ENTITY_VARIANT, (string) $variant['id'])
-                    ? 'update' : 'create',
-                'status'          => SyncLog::STATUS_PROCESSING,
+                'direction'   => SyncLog::DIRECTION_ODOO_TO_SHOPIFY,
+                'entity_type' => self::ENTITY_VARIANT,
+                'entity_id'   => (string) $variant['id'],
+                'action'      => $existingMapping ? 'update' : 'create',
+                'status'      => SyncLog::STATUS_PROCESSING,
             ]);
 
             try {
-                $productAttributes = $this->odooProducts->getProductAttributes((int) $odooTemplate['id']);
-				$attributes = $this->amazonListings->buildListingAttributes($odooTemplate, $variant, $productAttributes);
+                // Build listing attributes using cached product attributes — no Odoo call
+                $attributes = $this->amazonListings->buildListingAttributes(
+                    $odooTemplate,
+                    $variant,
+                    $productAttributes   // ← from cache, not from Odoo
+                );
 
                 $result = $this->amazonListings->putListing($sku, $attributes);
-
                 $status = $result['status'] ?? 'UNKNOWN';
 
-                // Amazon listing PUT returns 'ACCEPTED' or 'INVALID'
                 if ($status === 'INVALID') {
                     $issues = $result['issues'] ?? [];
                     throw new \RuntimeException('Amazon rejected listing: ' . json_encode(array_slice($issues, 0, 3)));
                 }
 
-                // Save mapping — use SKU as shopify_id equivalent for Amazon
                 $this->mappings->upsert(self::ENTITY_VARIANT, (string) $variant['id'], $sku, [
                     'odoo_reference' => $sku,
                     'last_synced_at' => now(),
                 ]);
 
-                // Also save template-level mapping
                 $this->mappings->upsert(self::ENTITY_PRODUCT, $odooId, $odooId, [
                     'last_synced_at' => now(),
                 ]);

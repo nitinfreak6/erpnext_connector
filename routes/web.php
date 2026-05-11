@@ -11,6 +11,7 @@ use App\Http\Controllers\Dashboard\UsersController;
 use App\Http\Controllers\Dashboard\WebhooksController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Dashboard\MappingController;
+use App\Http\Controllers\Dashboard\ProductCacheController;
 
 /*
 |--------------------------------------------------------------------------
@@ -37,9 +38,24 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
     Route::get('/', [OverviewController::class, 'index'])->name('');
 
     // Sync data views (viewer+)
-    Route::get('/products',  [ProductsController::class, 'index'])->name('.products');
+    Route::get('/products',             [ProductsController::class, 'index']) ->name('.products');
+	Route::get('/products/{odooId}',    [ProductsController::class, 'show'])  ->name('.products.show');
+	Route::post('/products/fetch',      [ProductsController::class, 'fetch']) ->name('.products.fetch');
+	Route::patch('/products/{odooId}/refresh', [ProductsController::class, 'refresh'])->name('.products.refresh');
+ 
     Route::get('/orders',    [OrdersController::class, 'index'])->name('.orders');
     Route::get('/inventory', [InventoryController::class, 'index'])->name('.inventory');
+	
+	Route::prefix('product-cache')->name('.product-cache')->group(function () {
+		Route::get('/',                              [ProductCacheController::class, 'index'])    ->name('.index');
+		Route::get('/{odooId}',                      [ProductCacheController::class, 'show'])     ->name('.show');
+		Route::post('/fetch',                        [ProductCacheController::class, 'fetchAll']) ->name('.fetch');
+		Route::post('/{odooId}/refresh',             [ProductCacheController::class, 'refresh'])  ->name('.refresh');
+		Route::post('/post-shopify',                 [ProductCacheController::class, 'postShopify'])->name('.post-shopify');
+		Route::post('/post-amazon',                  [ProductCacheController::class, 'postAmazon']) ->name('.post-amazon');
+		Route::delete('/{odooId}/clear',             [ProductCacheController::class, 'clear'])    ->name('.clear');
+		Route::delete('/clear-all',                  [ProductCacheController::class, 'clearAll']) ->name('.clear-all');
+	});
 
     // Logs (viewer+)
     Route::get('/logs',        [SyncLogsController::class, 'index'])->name('.logs');
