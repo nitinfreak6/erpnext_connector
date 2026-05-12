@@ -49,6 +49,16 @@
             <div class="text-right text-xs text-gray-400 space-y-1">
                 <div>Variants: <strong class="text-gray-700">{{ count($data['variants'] ?? []) }}</strong></div>
                 <div>Attribute Values: <strong class="text-gray-700">{{ count($data['attribute_values'] ?? []) }}</strong></div>
+                @if($syncLog)
+                <div>
+                    Last pushed:
+                    @if($syncLog->status === 'success')
+                        <strong class="text-emerald-600">{{ $syncLog->synced_at?->diffForHumans() ?? $syncLog->updated_at->diffForHumans() }}</strong>
+                    @else
+                        <strong class="text-red-500">Failed {{ $syncLog->updated_at->diffForHumans() }}</strong>
+                    @endif
+                </div>
+                @endif
             </div>
         </div>
     </div>
@@ -68,9 +78,23 @@
                     class="px-5 py-3 text-sm font-medium transition">
                 🛍 Shopify Payload
             </button>
+            <button @click="tab = 'response'"
+                    :class="tab === 'response' ? 'border-b-2 border-indigo-500 text-indigo-600 bg-white' : 'text-gray-500 hover:text-gray-700'"
+                    class="px-5 py-3 text-sm font-medium transition flex items-center gap-1.5">
+                📨 Shopify Response
+                @if($syncLog)
+                    @if($syncLog->status === 'success')
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+                    @else
+                        <span class="w-2 h-2 rounded-full bg-red-400 inline-block"></span>
+                    @endif
+                @else
+                    <span class="w-2 h-2 rounded-full bg-gray-300 inline-block"></span>
+                @endif
+            </button>
         </div>
 
-        {{-- RAW JSON tab — full cache file --}}
+        {{-- RAW JSON tab --}}
         <div x-show="tab === 'raw'" class="p-5">
             <p class="text-xs text-gray-400 mb-3">
                 Full contents of <code class="bg-gray-100 px-1 rounded">storage/app/products/{{ $odooId }}.json</code>
@@ -82,10 +106,8 @@
         {{-- SHOPIFY PAYLOAD tab --}}
         <div x-show="tab === 'shopify'" class="p-5">
             <p class="text-xs text-gray-400 mb-3">
-                Preview of what will be sent to Shopify API for this product.
-                Based on active
-                <a href="{{ route('dashboard.mappings.index', 'product_field') }}"
-                   class="text-indigo-500 hover:underline">Product Field Mappings</a>.
+                What will be sent to Shopify API for this product, based on active
+                <a href="{{ route('dashboard.product-field-config.index') }}" class="text-indigo-500 hover:underline">Product Field Mappings</a>.
             </p>
 
             @if(!empty($shopifyPayload['_error']))
@@ -111,8 +133,76 @@
                      style="max-height:72vh">{{ json_encode($shopifyPayload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) }}</pre>
             @else
                 <div class="py-10 text-center text-gray-400 text-sm">
-                    No payload generated.
-                    Make sure <a href="{{ route('dashboard.mappings.index', 'product_field') }}" class="text-indigo-500 hover:underline">Product Field Mappings</a> are configured and run <code class="bg-gray-100 px-1 rounded">php artisan migrate</code> to seed defaults.
+                    No payload generated. Check
+                    <a href="{{ route('dashboard.product-field-config.index') }}" class="text-indigo-500 hover:underline">Product Field Mappings</a>
+                    and run <code class="bg-gray-100 px-1 rounded">php artisan migrate</code> to seed defaults.
+                </div>
+            @endif
+        </div>
+
+        {{-- SHOPIFY RESPONSE tab --}}
+        <div x-show="tab === 'response'" class="p-5">
+
+            @if($syncLog)
+                {{-- Log meta --}}
+                <div class="flex flex-wrap items-center gap-3 mb-4 pb-4 border-b border-gray-100">
+                    <div class="flex items-center gap-1.5">
+                        @if($syncLog->status === 'success')
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">✓ Success</span>
+                        @elseif($syncLog->status === 'failed')
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">✗ Failed</span>
+                        @else
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">{{ $syncLog->status }}</span>
+                        @endif
+                    </div>
+                    <span class="text-xs text-gray-500">Action: <strong>{{ $syncLog->action }}</strong></span>
+                    <span class="text-xs text-gray-500">
+                        At: <strong>{{ ($syncLog->synced_at ?? $syncLog->updated_at)?->format('Y-m-d H:i:s') }}</strong>
+                        ({{ ($syncLog->synced_at ?? $syncLog->updated_at)?->diffForHumans() }})
+                    </span>
+                    <span class="text-xs text-gray-500">Attempts: <strong>{{ $syncLog->attempts }}</strong></span>
+                    @if($shopifyResponse && isset($shopifyResponse['id']))
+                        <a href="https://admin.shopify.com/products/{{ $shopifyResponse['id'] }}"
+                           target="_blank"
+                           class="text-xs text-indigo-600 hover:underline">
+                            View on Shopify ↗
+                        </a>
+                    @endif
+                </div>
+
+                {{-- Error (if failed) --}}
+                @if($syncLog->status === 'failed' && $syncLog->error_message)
+                <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                    <h4 class="text-sm font-semibold text-red-700 mb-1">Error</h4>
+                    <p class="text-sm text-red-600">{{ $syncLog->error_message }}</p>
+                    @if($syncLog->error_context)
+                    <pre class="mt-2 text-xs text-red-500 overflow-x-auto whitespace-pre-wrap">{{ json_encode($syncLog->error_context, JSON_PRETTY_PRINT) }}</pre>
+                    @endif
+                </div>
+                @endif
+
+                {{-- Full Shopify response --}}
+                @if($shopifyResponse)
+                    <p class="text-xs text-gray-400 mb-2">
+                        Full response from Shopify API
+                        @if(isset($shopifyResponse['id']))
+                            · Shopify Product ID: <strong class="text-gray-700">{{ $shopifyResponse['id'] }}</strong>
+                        @endif
+                    </p>
+                    <pre class="bg-gray-50 border border-gray-200 rounded-lg p-4 text-xs text-gray-700 overflow-x-auto whitespace-pre-wrap"
+                         style="max-height:72vh">{{ json_encode($shopifyResponse, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) }}</pre>
+                @else
+                    <p class="text-xs text-gray-400 mb-3">No response body stored for this log entry.</p>
+                @endif
+
+            @else
+                {{-- Never pushed --}}
+                <div class="py-12 text-center">
+                    <svg class="w-10 h-10 text-gray-200 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                    </svg>
+                    <p class="text-sm text-gray-400 font-medium">Not pushed to Shopify yet</p>
+                    <p class="text-xs text-gray-300 mt-1">Run <code class="bg-gray-100 px-1 rounded">php artisan sync:products</code> or use the Fetch Products button.</p>
                 </div>
             @endif
         </div>

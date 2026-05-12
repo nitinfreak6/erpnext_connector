@@ -110,7 +110,7 @@ class ProductSyncService
 
             $this->syncVariantMappings($variants, $shopifyProduct['variants'] ?? []);
 
-            $log->markSuccess(json_encode(['shopify_product_id' => $shopifyProductId]));
+            $log->markSuccess(json_encode($shopifyProduct));
             Log::info("Product synced: Odoo #{$odooId} → Shopify #{$shopifyProductId}", ['action' => $action]);
 
             return $shopifyProductId;

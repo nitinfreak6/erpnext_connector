@@ -66,6 +66,7 @@ class ProductsController extends Controller
     /**
      * Show raw Odoo data for a product — reads from JSON cache, never calls Odoo.
      * Also previews what the Shopify payload would look like.
+     * Also shows the last Shopify API response from sync_logs.
      */
     public function show(int $odooId)
     {
@@ -90,7 +91,21 @@ class ProductsController extends Controller
             $shopifyPayload = ['_error' => $e->getMessage()];
         }
 
-        return view('dashboard.products-detail', compact('odooId', 'data', 'shopifyPayload'));
+        // Load latest Shopify sync response from sync_logs
+        $syncLog = \App\Models\SyncLog::where('entity_type', 'product')
+            ->where('entity_id', (string) $odooId)
+            ->whereIn('status', ['success', 'failed'])
+            ->latest()
+            ->first();
+
+        $shopifyResponse = null;
+        if ($syncLog && $syncLog->response_payload) {
+            $shopifyResponse = json_decode($syncLog->response_payload, true) ?? $syncLog->response_payload;
+        }
+
+        return view('dashboard.products-detail', compact(
+            'odooId', 'data', 'shopifyPayload', 'shopifyResponse', 'syncLog'
+        ));
     }
 
     /**

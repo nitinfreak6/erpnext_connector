@@ -12,6 +12,7 @@ use App\Http\Controllers\Dashboard\WebhooksController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Dashboard\MappingController;
 use App\Http\Controllers\Dashboard\ProductCacheController;
+use App\Http\Controllers\Dashboard\ProductFieldConfigController;
 
 /*
 |--------------------------------------------------------------------------
@@ -56,6 +57,16 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
 		Route::delete('/{odooId}/clear',             [ProductCacheController::class, 'clear'])    ->name('.clear');
 		Route::delete('/clear-all',                  [ProductCacheController::class, 'clearAll']) ->name('.clear-all');
 	});
+	
+	Route::prefix('product-field-config')->name('.product-field-config')->middleware('role:manage-settings')->group(function () {
+    Route::get('/',                                    [ProductFieldConfigController::class, 'index'])            ->name('.index');
+    Route::post('/',                                   [ProductFieldConfigController::class, 'store'])            ->name('.store');
+    Route::put('/{config}',                            [ProductFieldConfigController::class, 'update'])           ->name('.update');
+    Route::delete('/{config}',                         [ProductFieldConfigController::class, 'destroy'])          ->name('.destroy');
+    Route::patch('/{config}/toggle',                   [ProductFieldConfigController::class, 'toggle'])           ->name('.toggle');
+    Route::post('/fetch-shopify-fields',               [ProductFieldConfigController::class, 'fetchShopifyFields'])->name('.fetch-shopify');
+    Route::post('/fetch-odoo-fields',                  [ProductFieldConfigController::class, 'fetchOdooFields'])  ->name('.fetch-odoo');
+});
 
     // Logs (viewer+)
     Route::get('/logs',        [SyncLogsController::class, 'index'])->name('.logs');
