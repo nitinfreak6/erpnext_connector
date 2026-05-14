@@ -44,6 +44,32 @@
                 </svg>
                 Overview
             </a>
+			
+			 {{-- Admin section --}}
+            @if(auth()->user()->isAdmin())
+            <div class="pt-3 pb-1">
+                <p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Admin</p>
+            </div>
+
+            <a href="{{ route('dashboard.settings') }}"
+               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.settings*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
+                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+                Global Settings
+            </a>
+
+            <a href="{{ route('dashboard.users.index') }}"
+               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.users*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
+                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+                </svg>
+                Users
+            </a>
+            @endif
 
             {{-- Sync section --}}
             <div class="pt-3 pb-1">
@@ -172,58 +198,70 @@
 			</div>
 			@endif
 			
+				{{-- Field Configuration collapsible --}}
+			@if(auth()->user()->hasPermission('manage-settings'))
 			<div class="pt-3 pb-1">
-                <p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Field Configuration</p>
-            </div>
+				<p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Field Configuration</p>
+			</div>
 
-            <a href="{{ route('dashboard.mappings.index', 'product_field') }}"
-               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.settings*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
-                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                </svg>
-                Product Mapping
-            </a>
-			
-			<a href="{{ route('dashboard.product-field-config.index') }}"
-               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.settings*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
-                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                </svg>
-                Product Field Mapping
-            </a>
-			
+			<div x-data="{ fieldConfigOpen: {{ request()->routeIs('dashboard.product-field-config*') ? 'true' : 'false' }} }">
+				{{-- Toggle button --}}
+				<button @click="fieldConfigOpen = !fieldConfigOpen"
+						class="w-full flex items-center justify-between gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+							   {{ request()->routeIs('dashboard.product-field-config*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
+					<div class="flex items-center gap-3">
+						<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+								  d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/>
+						</svg>
+						Field Config
+					</div>
+					<svg class="w-3.5 h-3.5 shrink-0 transition-transform" :class="fieldConfigOpen ? 'rotate-180' : ''"
+						 fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+					</svg>
+				</button>
 
+				{{-- Sub-items --}}
+				<div x-show="fieldConfigOpen" x-cloak
+					 x-transition:enter="transition ease-out duration-100"
+					 x-transition:enter-start="opacity-0 -translate-y-1"
+					 x-transition:enter-end="opacity-100 translate-y-0"
+					 class="mt-1 ml-3 pl-3 border-l border-indigo-700/50 space-y-0.5">
 
-            {{-- Admin section --}}
-            @if(auth()->user()->isAdmin())
-            <div class="pt-3 pb-1">
-                <p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Admin</p>
-            </div>
+					{{-- Products --}}
+					<a href="{{ route('dashboard.product-field-config.index') }}"
+					   class="flex items-center gap-2.5 px-2 py-1.5 text-xs rounded-lg transition-colors
+							  {{ request()->routeIs('dashboard.product-field-config*')
+								 ? 'bg-indigo-600 text-white font-medium'
+								 : 'text-indigo-200 hover:bg-indigo-700/50 hover:text-white' }}">
+						<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+								  d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+						</svg>
+						Products
+					</a>
 
-            <a href="{{ route('dashboard.settings') }}"
-               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.settings*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
-                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                </svg>
-                API Settings
-            </a>
+					{{-- Future entries: Orders, Dispatch, etc. --}}
+					{{-- Example:
+					<a href="{{ route('dashboard.order-field-config.index') }}"
+					   class="flex items-center gap-2.5 px-2 py-1.5 text-xs rounded-lg transition-colors
+							  {{ request()->routeIs('dashboard.order-field-config*')
+								 ? 'bg-indigo-600 text-white font-medium'
+								 : 'text-indigo-200 hover:bg-indigo-700/50 hover:text-white' }}">
+						<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+								  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+						</svg>
+						Orders
+					</a>
+					--}}
 
-            <a href="{{ route('dashboard.users.index') }}"
-               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.users*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
-                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
-                </svg>
-                Users
-            </a>
-            @endif
-        </nav>
+				</div>
+			</div>
+			@endif
+
+		</nav>
 
         {{-- User footer --}}
         <div class="border-t border-indigo-700/50 px-4 py-3">

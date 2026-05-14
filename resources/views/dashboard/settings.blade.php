@@ -1,5 +1,5 @@
 @extends('dashboard.layout')
-@section('title', 'Global Settings')
+@section('title', app(\App\Services\SettingsService::class)->appName() . ' — Settings')
 @section('page-title', 'Global Settings')
 
 @section('content')
@@ -12,144 +12,38 @@
 @endif
 
 <style>
-    .settings-card {
-        background: #fff;
-        border: 1px solid #e5e7eb;
-        border-radius: 10px;
-        margin-bottom: 16px;
-        overflow: hidden;
-    }
-    .settings-header {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        margin: 20px 20px 0 20px;
-        padding: 8px 18px;
-        border-radius: 999px;
-        font-size: 13px;
-        font-weight: 700;
-        color: #fff;
-        cursor: pointer;
-        user-select: none;
-        letter-spacing: 0.01em;
-        transition: opacity 0.15s;
-    }
-    .settings-header:hover { opacity: 0.9; }
-    .settings-header .icon {
-        font-size: 15px;
-        line-height: 1;
-    }
-    .settings-header .chevron {
-        margin-left: 4px;
-        transition: transform 0.2s;
-    }
-    .settings-header.open .chevron { transform: rotate(180deg); }
-    .settings-divider {
-        height: 1px;
-        background: #f3f4f6;
-        margin: 16px 0 0 0;
-    }
-    .settings-body { padding: 8px 0 20px 0; }
-    .settings-row {
-        display: grid;
-        grid-template-columns: 180px 1fr;
-        gap: 12px;
-        align-items: flex-start;
-        padding: 12px 24px;
-    }
-    .settings-label {
-        font-size: 13px;
-        font-weight: 600;
-        color: #1f2937;
-        padding-top: 8px;
-        line-height: 1.4;
-    }
-    .settings-desc {
-        font-size: 11px;
-        color: #9ca3af;
-        margin-top: 2px;
-    }
-    .settings-input {
-        width: 100%;
-        border: 1px solid #d1d5db;
-        border-radius: 6px;
-        padding: 7px 11px;
-        font-size: 13px;
-        color: #1f2937;
-        background: #fff;
-        outline: none;
-        transition: border-color 0.15s, box-shadow 0.15s;
-    }
-    .settings-input:focus {
-        border-color: #6366f1;
-        box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
-    }
-    select.settings-input { cursor: pointer; }
-    textarea.settings-input { resize: vertical; font-family: monospace; font-size: 12px; }
-    .secret-wrap { display: flex; gap: 8px; }
-    .secret-wrap .settings-input { font-family: monospace; }
-    .reveal-btn {
-        padding: 7px 12px;
-        font-size: 11px;
-        border: 1px solid #d1d5db;
-        border-radius: 6px;
-        background: #f9fafb;
-        color: #6b7280;
-        cursor: pointer;
-        white-space: nowrap;
-        transition: background 0.15s;
-    }
-    .reveal-btn:hover { background: #f3f4f6; }
-    .reveal-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .toggle-wrap { display: flex; align-items: center; gap: 10px; padding-top: 6px; }
-    .toggle-track {
-        position: relative; display: inline-flex; align-items: center;
-        width: 44px; height: 24px; border-radius: 999px;
-        background: #d1d5db; cursor: pointer; transition: background 0.2s;
-    }
-    .toggle-track.on { background: #1e293b; }
-    .toggle-thumb {
-        position: absolute; left: 3px; width: 18px; height: 18px;
-        border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-        transition: transform 0.2s;
-    }
-    .toggle-track.on .toggle-thumb { transform: translateX(20px); }
-    .toggle-label { font-size: 13px; color: #6b7280; }
-    .save-bar {
-        position: sticky; bottom: 0; left: 0; right: 0;
-        background: rgba(255,255,255,0.95);
-        backdrop-filter: blur(8px);
-        border-top: 1px solid #e5e7eb;
-        padding: 14px 0;
-        margin-top: 8px;
-        display: flex; align-items: center; justify-content: space-between;
-    }
-    .save-btn {
-        background: #f97316;
-        color: #fff;
-        font-size: 13px;
-        font-weight: 700;
-        padding: 10px 28px;
-        border-radius: 8px;
-        border: none;
-        cursor: pointer;
-        transition: background 0.15s;
-        letter-spacing: 0.01em;
-    }
-    .save-btn:hover { background: #ea6c00; }
-    .erp-pill {
-        display: inline-flex; align-items: center; gap: 6px;
-        padding: 4px 12px; border-radius: 999px;
-        font-size: 11px; font-weight: 600;
-        border: 1.5px solid #d1d5db; cursor: pointer;
-        transition: all 0.15s; background: #fff; color: #6b7280;
-    }
-    .erp-pill.selected { background: #1e293b; color: #fff; border-color: #1e293b; }
-    .secret-badge {
-        display: inline-flex; align-items: center; gap: 3px;
-        font-size: 10px; color: #ef4444; background: #fef2f2;
-        border: 1px solid #fecaca; padding: 1px 6px; border-radius: 999px; margin-top: 4px;
-    }
+    .settings-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; margin-bottom:16px; overflow:hidden; }
+    .settings-header { display:inline-flex; align-items:center; gap:8px; margin:20px 20px 0 20px; padding:8px 18px; border-radius:999px; font-size:13px; font-weight:700; color:#fff; cursor:pointer; user-select:none; letter-spacing:0.01em; transition:opacity 0.15s; }
+    .settings-header:hover { opacity:0.9; }
+    .settings-header .icon { font-size:15px; line-height:1; }
+    .settings-header .chevron { margin-left:4px; transition:transform 0.2s; }
+    .settings-header.open .chevron { transform:rotate(180deg); }
+    .settings-divider { height:1px; background:#f3f4f6; margin:16px 0 0 0; }
+    .settings-body { padding:8px 0 20px 0; }
+    .settings-row { display:grid; grid-template-columns:180px 1fr; gap:12px; align-items:flex-start; padding:12px 24px; }
+    .settings-label { font-size:13px; font-weight:600; color:#1f2937; padding-top:8px; line-height:1.4; }
+    .settings-desc { font-size:11px; color:#9ca3af; margin-top:2px; }
+    .settings-input { width:100%; border:1px solid #d1d5db; border-radius:6px; padding:7px 11px; font-size:13px; color:#1f2937; background:#fff; outline:none; transition:border-color 0.15s,box-shadow 0.15s; }
+    .settings-input:focus { border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,0.1); }
+    select.settings-input { cursor:pointer; }
+    textarea.settings-input { resize:vertical; font-family:monospace; font-size:12px; }
+    .secret-wrap { display:flex; gap:8px; }
+    .secret-wrap .settings-input { font-family:monospace; }
+    .reveal-btn { padding:7px 12px; font-size:11px; border:1px solid #d1d5db; border-radius:6px; background:#f9fafb; color:#6b7280; cursor:pointer; white-space:nowrap; transition:background 0.15s; }
+    .reveal-btn:hover { background:#f3f4f6; }
+    .reveal-btn:disabled { opacity:0.4; cursor:not-allowed; }
+    .toggle-wrap { display:flex; align-items:center; gap:10px; padding-top:6px; }
+    .toggle-track { position:relative; display:inline-flex; align-items:center; width:44px; height:24px; border-radius:999px; background:#d1d5db; cursor:pointer; transition:background 0.2s; }
+    .toggle-track.on { background:#1e293b; }
+    .toggle-thumb { position:absolute; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,0.2); transition:transform 0.2s; }
+    .toggle-track.on .toggle-thumb { transform:translateX(20px); }
+    .toggle-label { font-size:13px; color:#6b7280; }
+    .save-bar { position:sticky; bottom:0; left:0; right:0; background:rgba(255,255,255,0.95); backdrop-filter:blur(8px); border-top:1px solid #e5e7eb; padding:14px 0; margin-top:8px; display:flex; align-items:center; justify-content:space-between; }
+    .save-btn { background:#f97316; color:#fff; font-size:13px; font-weight:700; padding:10px 28px; border-radius:8px; border:none; cursor:pointer; transition:background 0.15s; letter-spacing:0.01em; }
+    .save-btn:hover { background:#ea6c00; }
+    .erp-pill { display:inline-flex; align-items:center; gap:6px; padding:4px 12px; border-radius:999px; font-size:11px; font-weight:600; border:1.5px solid #d1d5db; cursor:pointer; transition:all 0.15s; background:#fff; color:#6b7280; }
+    .erp-pill.selected { background:#1e293b; color:#fff; border-color:#1e293b; }
+    .secret-badge { display:inline-flex; align-items:center; gap:3px; font-size:10px; color:#ef4444; background:#fef2f2; border:1px solid #fecaca; padding:1px 6px; border-radius:999px; margin-top:4px; }
 </style>
 
 <form method="POST" action="{{ route('dashboard.settings.update') }}" id="settings-form">
@@ -158,27 +52,24 @@
 
     @php
         $sectionOrder = ['general', 'odoo', 'shopify', 'amazon'];
-
         $sectionConfig = [
-            'general'  => ['label' => 'Common Settings',   'gradient' => 'linear-gradient(135deg, #f97316, #ef4444)', 'open' => true],
-            'odoo'     => ['label' => 'Odoo Settings',      'gradient' => 'linear-gradient(135deg, #7c3aed, #6366f1)', 'open' => false],
-            'shopify'  => ['label' => 'Shopify Settings',   'gradient' => 'linear-gradient(135deg, #059669, #10b981)', 'open' => false],
-            'amazon'   => ['label' => 'Amazon Settings',    'gradient' => 'linear-gradient(135deg, #d97706, #f59e0b)', 'open' => false],
-            'sync'     => ['label' => 'Sync Settings',      'gradient' => 'linear-gradient(135deg, #0ea5e9, #6366f1)', 'open' => false],
+            'general' => ['label' => 'Common Settings',  'gradient' => 'linear-gradient(135deg,#f97316,#ef4444)', 'open' => true],
+            'odoo'    => ['label' => 'Odoo Settings',     'gradient' => 'linear-gradient(135deg,#7c3aed,#6366f1)', 'open' => false],
+            'shopify' => ['label' => 'Shopify Settings',  'gradient' => 'linear-gradient(135deg,#059669,#10b981)', 'open' => false],
+            'amazon'  => ['label' => 'Amazon Settings',   'gradient' => 'linear-gradient(135deg,#d97706,#f59e0b)', 'open' => false],
         ];
     @endphp
 
     @foreach($sectionOrder as $groupKey)
         @php
             $settings = $groups[$groupKey] ?? collect();
-            $cfg      = $sectionConfig[$groupKey] ?? ['label' => ucfirst($groupKey), 'gradient' => 'linear-gradient(135deg,#6366f1,#8b5cf6)', 'open' => false];
+            $cfg      = $sectionConfig[$groupKey];
             $domId    = 'section-' . $groupKey;
         @endphp
 
         <div class="settings-card">
-            {{-- Pill header --}}
             <div class="settings-header {{ $cfg['open'] ? 'open' : '' }}"
-                 style="background: {{ $cfg['gradient'] }}"
+                 style="background:{{ $cfg['gradient'] }}"
                  onclick="toggleSection('{{ $domId }}', this)">
                 <span class="icon">{{ $cfg['open'] ? '−' : '+' }}</span>
                 {{ $cfg['label'] }}
@@ -186,16 +77,12 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
                 </svg>
             </div>
-
-            {{-- Divider --}}
             <div class="settings-divider"></div>
-
-            {{-- Body --}}
             <div id="{{ $domId }}" class="settings-body" style="{{ $cfg['open'] ? '' : 'display:none' }}">
                 @if($settings->isEmpty())
                     <div class="px-6 py-6 text-center text-sm text-gray-400">No settings configured.</div>
                 @else
-                    @foreach($settings as $setting)
+                    @foreach($settings->sortBy('sort_order') as $setting)
                     @php
                         $fieldType    = $setting->field_type ?? 'text';
                         $currentValue = $setting->getDecryptedValue() ?? $setting->default_value ?? '';
@@ -205,19 +92,20 @@
                         <div>
                             <div class="settings-label">{{ $setting->label }}</div>
                             @if($setting->description)
-                            <div class="settings-desc">{{ $setting->description }}</div>
+                                <div class="settings-desc">{{ $setting->description }}</div>
                             @endif
                             @if($setting->is_secret)
-                            <div class="secret-badge">
-                                <svg width="10" height="10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-                                Secret
-                            </div>
+                                <div class="secret-badge">
+                                    <svg width="10" height="10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                                    Secret
+                                </div>
                             @endif
                         </div>
 
                         {{-- Input --}}
                         <div>
-                            {{-- ERP Driver — pill selector --}}
+
+                            {{-- ── ERP Driver pill selector ──────────────── --}}
                             @if($setting->key === 'erp_driver')
                             <div x-data="{ selected: '{{ $currentValue ?: 'odoo' }}' }" style="padding-top:4px">
                                 <input type="hidden" name="{{ $setting->key }}" :value="selected">
@@ -231,10 +119,12 @@
                                     </button>
                                     @endforeach
                                 </div>
-                                <p style="font-size:11px;color:#9ca3af;margin-top:6px">Active ERP driver. Changing this takes effect after Save Changes.</p>
+                                <p style="font-size:11px;color:#9ca3af;margin-top:6px">
+                                    Active ERP adapter. Change the <strong>ERP Display Name</strong> above to match.
+                                </p>
                             </div>
 
-                            {{-- Toggle --}}
+                            {{-- ── Toggle ──────────────────────────────────── --}}
                             @elseif($fieldType === 'toggle')
                             <div x-data="{ on: {{ in_array($currentValue, ['1','true','yes','on']) ? 'true' : 'false' }} }"
                                  class="toggle-wrap">
@@ -245,14 +135,14 @@
                                 <input type="hidden" name="{{ $setting->key }}" :value="on ? '1' : '0'">
                             </div>
 
-                            {{-- Textarea --}}
+                            {{-- ── Textarea ─────────────────────────────────── --}}
                             @elseif($fieldType === 'textarea')
                             <textarea name="{{ $setting->key }}"
                                       rows="3"
                                       placeholder="{{ $setting->default_value }}"
                                       class="settings-input">{{ $currentValue }}</textarea>
 
-                            {{-- Number --}}
+                            {{-- ── Number ───────────────────────────────────── --}}
                             @elseif($fieldType === 'number')
                             <input type="number"
                                    name="{{ $setting->key }}"
@@ -261,18 +151,16 @@
                                    style="width:120px"
                                    class="settings-input">
 
-                            {{-- Secret --}}
+                            {{-- ── Secret ───────────────────────────────────── --}}
                             @elseif($setting->is_secret)
-                            <div x-data="{ revealed: false, loading: false, val: '' }"
-                                 class="secret-wrap">
+                            <div x-data="{ revealed: false, loading: false, val: '' }" class="secret-wrap">
                                 <input :type="revealed ? 'text' : 'password'"
                                        name="{{ $setting->key }}"
                                        :value="revealed ? val : ''"
                                        :placeholder="revealed ? '' : '{{ $setting->getMaskedValue() ?: 'Not set — enter value' }}'"
                                        class="settings-input">
                                 @if(auth()->user()->can('reveal-secrets'))
-                                <button type="button"
-                                        class="reveal-btn"
+                                <button type="button" class="reveal-btn"
                                         :disabled="revealed || loading"
                                         @click="loading=true; fetch('{{ route('dashboard.settings.reveal', $setting) }}',{headers:{'X-Requested-With':'XMLHttpRequest','Accept':'application/json'}}).then(r=>r.json()).then(d=>{val=d.value;revealed=true;loading=false}).catch(()=>loading=false)">
                                     <span x-show="!loading && !revealed">Reveal</span>
@@ -283,14 +171,26 @@
                             </div>
                             <div style="font-size:11px;color:#9ca3af;margin-top:4px">Leave blank to keep existing value.</div>
 
-                            {{-- Plain text --}}
+                            {{-- ── Plain text (app_name, erp_display_name, etc.) ── --}}
                             @else
                             <input type="text"
                                    name="{{ $setting->key }}"
                                    value="{{ $currentValue }}"
                                    placeholder="{{ $setting->default_value }}"
-                                   class="settings-input">
+                                   class="settings-input"
+                                   @if($setting->key === 'app_name') style="font-weight:600" @endif>
+                            @if($setting->key === 'app_name')
+                                <p style="font-size:11px;color:#9ca3af;margin-top:4px">
+                                    Used in the browser tab and page header across the whole app.
+                                </p>
                             @endif
+                            @if($setting->key === 'erp_display_name')
+                                <p style="font-size:11px;color:#9ca3af;margin-top:4px">
+                                    Replaces "Odoo" wherever ERP labels appear — field config columns, product pages, log messages.
+                                </p>
+                            @endif
+                            @endif
+
                         </div>
                     </div>
                     @endforeach
@@ -299,11 +199,11 @@
         </div>
     @endforeach
 
-    {{-- Manual sync triggers --}}
+    {{-- Sync triggers --}}
     @if(auth()->user()->can('trigger-sync'))
     <div class="settings-card">
         <div class="settings-header"
-             style="background: linear-gradient(135deg, #475569, #334155)"
+             style="background:linear-gradient(135deg,#475569,#334155)"
              onclick="toggleSection('section-sync-triggers', this)">
             <span class="icon">+</span>
             Sync Triggers
@@ -313,7 +213,7 @@
         </div>
         <div class="settings-divider"></div>
         <div id="section-sync-triggers" class="settings-body" style="display:none">
-            <div style="padding: 4px 24px 8px; display:grid; grid-template-columns: repeat(4, 1fr); gap:10px">
+            <div style="padding:4px 24px 8px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
                 @foreach([
                     'products'         => ['label' => 'Shopify Products',  'color' => '#6366f1'],
                     'inventory'        => ['label' => 'Shopify Inventory', 'color' => '#6366f1'],
@@ -344,21 +244,16 @@
         <p style="font-size:12px;color:#9ca3af">Changes take effect immediately after saving.</p>
         <button type="submit" class="save-btn">Save Changes</button>
     </div>
-
 </form>
 
 <script>
 function toggleSection(id, header) {
-    const body = document.getElementById(id);
+    const body   = document.getElementById(id);
     const isOpen = body.style.display !== 'none';
-
     body.style.display = isOpen ? 'none' : 'block';
     header.classList.toggle('open', !isOpen);
-
-    // Update +/- icon
     const icon = header.querySelector('.icon');
     if (icon) icon.textContent = isOpen ? '+' : '−';
 }
 </script>
-
 @endsection

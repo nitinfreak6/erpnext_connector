@@ -64,16 +64,84 @@ class SettingsService
         Cache::forget(self::CACHE_KEY);
     }
 
-    // ── Typed accessors ──────────────────────────────────────────────────
+    // ── App identity ───────────────────────────────────────────────────
 
     /**
-     * Which ERP driver is active. Reads from DB first, falls back to .env.
-     * This replaces ERP_DRIVER env variable — manage from Global Settings UI.
+     * Application name — shown in browser tab, header, emails.
+     * Falls back to APP_NAME from .env.
      */
+    public function appName(): string
+    {
+        return $this->get('app_name') ?: config('app.name', 'Connector');
+    }
+
+    /**
+     * ERP display name — shown wherever the ERP label appears in the UI.
+     * e.g. "Odoo Field", "Odoo ID" column headers in product field config.
+     * Defaults to 'Odoo' for existing installs.
+     */
+    public function erpDisplayName(): string
+    {
+        return $this->get('erp_display_name') ?: 'Odoo';
+    }
+
+    // ── ERP driver ─────────────────────────────────────────────────────
+
     public function erpDriver(): string
     {
-        return $this->get('erp_driver') ?? env('ERP_DRIVER', 'odoo');
+        return $this->get('erp_driver')
+            ?? config('sync.erp_driver', env('ERP_DRIVER', 'odoo'));
     }
+
+    // ── Sync master switches ───────────────────────────────────────────
+
+    /**
+     * Returns true only when the value is explicitly '1', 'true', 'yes', or 'on'.
+     * Any other value (including null / empty string) is treated as DISABLED
+     * so a missing DB row can't accidentally leave sync running.
+     */
+    private function isEnabled(string $key, bool $default = true): bool
+    {
+        $value = $this->get($key);
+
+        if ($value === null || $value === '') {
+            return $default;
+        }
+
+        return in_array(strtolower($value), ['1', 'true', 'yes', 'on'], true);
+    }
+
+    public function isProductSyncEnabled(): bool
+    {
+        return $this->isEnabled('sync_products_enabled', true);
+    }
+
+    public function isInventorySyncEnabled(): bool
+    {
+        return $this->isEnabled('sync_inventory_enabled', true);
+    }
+
+    public function isOrderSyncEnabled(): bool
+    {
+        return $this->isEnabled('sync_orders_enabled', true);
+    }
+
+    public function isCustomerSyncEnabled(): bool
+    {
+        return $this->isEnabled('sync_customers_enabled', true);
+    }
+
+    public function isShopifyChannelEnabled(): bool
+    {
+        return $this->isEnabled('shopify_channel_enabled', true);
+    }
+
+    public function isAmazonChannelEnabled(): bool
+    {
+        return $this->isEnabled('amazon_channel_enabled', true);
+    }
+
+    // ── Odoo credentials ───────────────────────────────────────────────
 
     public function odooUrl(): string
     {
@@ -95,14 +163,11 @@ class SettingsService
         return $this->get('odoo_api_key') ?? env('ODOO_API_KEY', '');
     }
 
+    // ── Shopify credentials ────────────────────────────────────────────
+
     public function shopifyShop(): string
     {
         return $this->get('shopify_shop') ?? env('SHOPIFY_SHOP', '');
-    }
-
-    public function shopifyVersion(): string
-    {
-        return $this->get('shopify_api_version') ?? env('SHOPIFY_API_VERSION', '2024-01');
     }
 
     public function shopifyAccessToken(): string
@@ -114,6 +179,8 @@ class SettingsService
     {
         return $this->get('shopify_webhook_secret') ?? env('SHOPIFY_WEBHOOK_SECRET', '');
     }
+
+    // ── Amazon credentials ─────────────────────────────────────────────
 
     public function amazonClientId(): string
     {
