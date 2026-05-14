@@ -4,33 +4,33 @@ namespace App\Services\Sync;
 
 use App\Models\SyncLog;
 use App\Models\SyncMapping;
+use App\Services\Erp\ErpInterface;
 use App\Services\MappingService;
-use App\Services\Odoo\OdooCustomerService;
 use App\Services\Shopify\ShopifyCustomerService;
 use Illuminate\Support\Facades\Log;
 
 class CustomerSyncService
 {
     public function __construct(
-        private readonly OdooCustomerService    $odooCustomers,
+        private readonly ErpInterface           $erp,              // ← was OdooCustomerService
         private readonly ShopifyCustomerService $shopifyCustomers,
         private readonly MappingService         $mappings,
     ) {}
 
     /**
-     * Sync a single Odoo partner to Shopify.
+     * Sync a single ERP partner/customer to Shopify.
      */
-    public function syncCustomer(array $odooPartner): string
+    public function syncCustomer(array $erpPartner): string
     {
-        $odooId  = (string) $odooPartner['id'];
-        $mapping = $this->mappings->findByOdooId(SyncMapping::TYPE_CUSTOMER, $odooId);
+        $erpId   = (string) $erpPartner['id'];
+        $mapping = $this->mappings->findByOdooId(SyncMapping::TYPE_CUSTOMER, $erpId);
 
-        $payload = $this->shopifyCustomers->buildPayload($odooPartner);
+        $payload = $this->shopifyCustomers->buildPayload($erpPartner);
 
         $log = SyncLog::create([
             'direction'       => SyncLog::DIRECTION_ODOO_TO_SHOPIFY,
             'entity_type'     => SyncMapping::TYPE_CUSTOMER,
-            'entity_id'       => $odooId,
+            'entity_id'       => $erpId,
             'action'          => $mapping ? 'update' : 'create',
             'status'          => SyncLog::STATUS_PROCESSING,
             'request_payload' => json_encode($payload),
@@ -40,8 +40,7 @@ class CustomerSyncService
             if ($mapping) {
                 $shopifyCustomer = $this->shopifyCustomers->update($mapping->shopify_id, $payload);
             } else {
-                // Check if customer already exists in Shopify by email
-                $email    = $odooPartner['email'] ?? '';
+                $email    = $erpPartner['email'] ?? '';
                 $existing = $email ? $this->shopifyCustomers->findByEmail($email) : null;
 
                 if ($existing) {
@@ -53,13 +52,12 @@ class CustomerSyncService
 
             $shopifyCustomerId = (string) $shopifyCustomer['id'];
 
-            $this->mappings->upsert(SyncMapping::TYPE_CUSTOMER, $odooId, $shopifyCustomerId, [
+            $this->mappings->upsert(SyncMapping::TYPE_CUSTOMER, $erpId, $shopifyCustomerId, [
                 'last_synced_at' => now(),
             ]);
 
             $log->markSuccess(json_encode(['shopify_customer_id' => $shopifyCustomerId]));
-
-            Log::info("Customer synced: Odoo #{$odooId} → Shopify #{$shopifyCustomerId}");
+            Log::info("Customer synced: ERP #{$erpId} → Shopify #{$shopifyCustomerId} [{$this->erp->driverName()}]");
 
             return $shopifyCustomerId;
         } catch (\Throwable $e) {

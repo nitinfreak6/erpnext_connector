@@ -57,6 +57,7 @@ class ProductsController extends Controller
                 $cachedIds[] = (int) $mapping->odoo_id;
             }
         }
+		
 
         return view('dashboard.products', compact(
             'products', 'search', 'channel', 'variantCounts', 'recentLogs', 'cachedIds'

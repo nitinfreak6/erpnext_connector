@@ -4,8 +4,8 @@ namespace App\Services\Sync;
 
 use App\Models\SyncLog;
 use App\Models\SyncMapping;
+use App\Services\Erp\ErpInterface;
 use App\Services\MappingService;
-use App\Services\Odoo\OdooOrderService;
 use App\Services\Shopify\ShopifyFulfillmentService;
 use App\Services\Shopify\ShopifyOrderService;
 use Illuminate\Support\Facades\Log;
@@ -13,35 +13,34 @@ use Illuminate\Support\Facades\Log;
 class FulfillmentSyncService
 {
     public function __construct(
-        private readonly OdooOrderService         $odooOrders,
+        private readonly ErpInterface              $erp,                 // ← was OdooOrderService
         private readonly ShopifyFulfillmentService $shopifyFulfillments,
         private readonly ShopifyOrderService       $shopifyOrders,
         private readonly MappingService            $mappings,
     ) {}
 
     /**
-     * Push fulfillment from Odoo delivery to Shopify.
+     * Push fulfillment from ERP delivery to Shopify.
      */
-    public function syncFulfillment(array $odooOrder): bool
+    public function syncFulfillment(array $erpOrder): bool
     {
-        $odooOrderId = (string) $odooOrder['id'];
+        $erpOrderId = (string) $erpOrder['id'];
 
-        $orderMapping = $this->mappings->findByOdooId(SyncMapping::TYPE_ORDER, $odooOrderId);
+        $orderMapping = $this->mappings->findByOdooId(SyncMapping::TYPE_ORDER, $erpOrderId);
 
         if (!$orderMapping) {
-            Log::debug("No Shopify mapping for Odoo order #{$odooOrderId}, skipping fulfillment.");
+            Log::debug("No Shopify mapping for ERP order #{$erpOrderId}, skipping fulfillment.");
             return false;
         }
 
         $shopifyOrderId = $orderMapping->shopify_id;
 
-        // Get pickings
-        $pickingIds = $odooOrder['picking_ids'] ?? [];
+        $pickingIds = $erpOrder['picking_ids'] ?? [];
         if (empty($pickingIds)) {
             return false;
         }
 
-        $pickings = $this->odooOrders->getPickings($pickingIds);
+        $pickings    = $this->erp->getPickings($pickingIds);
         $donePicking = null;
 
         foreach ($pickings as $picking) {
@@ -56,22 +55,20 @@ class FulfillmentSyncService
         }
 
         $moveIds = $donePicking['move_ids'] ?? [];
-        $moves   = $moveIds ? $this->odooOrders->getMoves($moveIds) : [];
+        $moves   = $moveIds ? $this->erp->getMoves($moveIds) : [];
 
-        // Get Shopify order to access line items
         $shopifyOrder = $this->shopifyOrders->get($shopifyOrderId);
         if (!$shopifyOrder) {
             return false;
         }
 
-        // Enrich line items with odoo product ids via mapping
         $shopifyLineItems = array_map(function ($item) {
-            $variantId = (string) ($item['variant_id'] ?? '');
+            $variantId      = (string) ($item['variant_id'] ?? '');
             $variantMapping = $variantId
                 ? $this->mappings->findByShopifyId(SyncMapping::TYPE_PRODUCT_VARIANT, $variantId)
                 : null;
 
-            $item['_odoo_product_id'] = $variantMapping ? (int) $variantMapping->odoo_id : null;
+            $item['_erp_product_id'] = $variantMapping ? (int) $variantMapping->odoo_id : null;
             return $item;
         }, $shopifyOrder['line_items'] ?? []);
 
@@ -80,7 +77,7 @@ class FulfillmentSyncService
         $log = SyncLog::create([
             'direction'       => SyncLog::DIRECTION_ODOO_TO_SHOPIFY,
             'entity_type'     => 'fulfillment',
-            'entity_id'       => $odooOrderId,
+            'entity_id'       => $erpOrderId,
             'action'          => 'fulfill',
             'status'          => SyncLog::STATUS_PROCESSING,
             'request_payload' => json_encode($payload),
@@ -89,8 +86,7 @@ class FulfillmentSyncService
         try {
             $fulfillment = $this->shopifyFulfillments->create($shopifyOrderId, $payload);
             $log->markSuccess(json_encode(['fulfillment_id' => $fulfillment['id'] ?? null]));
-
-            Log::info("Fulfillment synced: Odoo order #{$odooOrderId} → Shopify #{$shopifyOrderId}");
+            Log::info("Fulfillment synced: ERP order #{$erpOrderId} → Shopify #{$shopifyOrderId} [{$this->erp->driverName()}]");
 
             return true;
         } catch (\Throwable $e) {
@@ -100,11 +96,11 @@ class FulfillmentSyncService
     }
 
     /**
-     * Push cancellation from Odoo to Shopify.
+     * Push cancellation from ERP to Shopify.
      */
-    public function syncCancellation(string $odooOrderId): bool
+    public function syncCancellation(string $erpOrderId): bool
     {
-        $orderMapping = $this->mappings->findByOdooId(SyncMapping::TYPE_ORDER, $odooOrderId);
+        $orderMapping = $this->mappings->findByOdooId(SyncMapping::TYPE_ORDER, $erpOrderId);
 
         if (!$orderMapping) {
             return false;
@@ -113,7 +109,7 @@ class FulfillmentSyncService
         $log = SyncLog::create([
             'direction'   => SyncLog::DIRECTION_ODOO_TO_SHOPIFY,
             'entity_type' => SyncMapping::TYPE_ORDER,
-            'entity_id'   => $odooOrderId,
+            'entity_id'   => $erpOrderId,
             'action'      => 'cancel',
             'status'      => SyncLog::STATUS_PROCESSING,
         ]);

@@ -12,6 +12,8 @@ class ProductFieldConfig extends Model
         'channel',
         'shopify_field',
         'shopify_field_label',
+        'graphql_field',
+        'graphql_cast',
         'field_type',
         'odoo_field',
         'odoo_field_label',
@@ -22,6 +24,8 @@ class ProductFieldConfig extends Model
         'max_length',
         'is_active',
         'sort_order',
+        'graphql_field',
+        'graphql_cast',
     ];
 
     protected $casts = [

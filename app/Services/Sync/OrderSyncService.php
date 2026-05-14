@@ -6,29 +6,27 @@ use App\Models\ChannelMapping;
 use App\Models\SyncLog;
 use App\Models\SyncMapping;
 use App\Services\ChannelMappingService;
+use App\Services\Erp\ErpInterface;
 use App\Services\MappingService;
-use App\Services\Odoo\OdooCustomerService;
-use App\Services\Odoo\OdooOrderService;
 use Illuminate\Support\Facades\Log;
 
 class OrderSyncService
 {
     public function __construct(
-        private readonly OdooOrderService      $odooOrders,
-        private readonly OdooCustomerService   $odooCustomers,
+        private readonly ErpInterface          $erp,             // ← was OdooOrderService + OdooCustomerService
         private readonly MappingService        $mappings,
         private readonly ChannelMappingService $channelMappings,
     ) {}
 
     /**
-     * Create an Odoo sale.order from a Shopify order payload.
+     * Create an ERP order from a Shopify order payload.
      */
-    public function createInOdoo(array $shopifyOrder): int
+    public function createInErp(array $shopifyOrder): int
     {
         $shopifyOrderId = (string) $shopifyOrder['id'];
 
         if ($this->mappings->findByShopifyId(SyncMapping::TYPE_ORDER, $shopifyOrderId)) {
-            Log::info("Shopify order #{$shopifyOrderId} already in Odoo, skipping.");
+            Log::info("Shopify order #{$shopifyOrderId} already in ERP, skipping.");
             return 0;
         }
 
@@ -45,7 +43,6 @@ class OrderSyncService
             $partnerId  = $this->resolveOrCreatePartner($shopifyOrder);
             $orderLines = $this->buildOrderLines($shopifyOrder['line_items'] ?? [], $shopifyOrder);
 
-            // Shipping line
             if (!empty($shopifyOrder['shipping_lines'][0])) {
                 $orderLines[] = $this->buildShippingLine($shopifyOrder['shipping_lines'][0]);
             }
@@ -61,19 +58,17 @@ class OrderSyncService
                 'date_order'          => date('Y-m-d H:i:s', strtotime($shopifyOrder['created_at'])),
             ];
 
-            // ── Wire: Sales Order Type mapping ───────────────────────────
+            // ── Channel mappings (unchanged) ────────────────────────────
             $orderTypeId = $this->channelMappings->odooSalesOrderType(ChannelMapping::CHANNEL_SHOPIFY);
             if ($orderTypeId) {
                 $orderData['type_id'] = (int) $orderTypeId;
             }
 
-            // ── Wire: Sales Rep mapping ──────────────────────────────────
             $salesRepId = $this->channelMappings->odooSalesRep(ChannelMapping::CHANNEL_SHOPIFY);
             if ($salesRepId) {
                 $orderData['user_id'] = (int) $salesRepId;
             }
 
-            // ── Wire: Pricelist mapping (by currency) ────────────────────
             $currency    = $shopifyOrder['currency'] ?? '';
             $pricelistId = $currency
                 ? $this->channelMappings->odooPricelist($currency, ChannelMapping::CHANNEL_SHOPIFY)
@@ -82,7 +77,6 @@ class OrderSyncService
                 $orderData['pricelist_id'] = (int) $pricelistId;
             }
 
-            // ── Wire: Channel mapping → Odoo sales team ──────────────────
             $teamId = $this->channelMappings->resolve(
                 ChannelMapping::TYPE_CHANNEL,
                 ChannelMapping::CHANNEL_SHOPIFY,
@@ -92,38 +86,44 @@ class OrderSyncService
                 $orderData['team_id'] = (int) $teamId;
             }
 
-            $odooOrderId = $this->odooOrders->createFromShopify($orderData);
+            $erpOrderId = $this->erp->createOrder($orderData);
 
-            // Auto-confirm if paid
             if (in_array($shopifyOrder['financial_status'] ?? '', ['paid', 'partially_paid'])) {
-                $this->odooOrders->confirmOrder($odooOrderId);
+                $this->erp->confirmOrder($erpOrderId);
             }
 
-            $this->mappings->upsert(SyncMapping::TYPE_ORDER, (string) $odooOrderId, $shopifyOrderId, [
+            $this->mappings->upsert(SyncMapping::TYPE_ORDER, (string) $erpOrderId, $shopifyOrderId, [
                 'shopify_handle' => $shopifyOrder['name'],
                 'last_synced_at' => now(),
             ]);
 
-            $log->markSuccess(json_encode(['odoo_order_id' => $odooOrderId]));
-            Log::info("Shopify order #{$shopifyOrderId} → Odoo #{$odooOrderId}");
+            $log->markSuccess(json_encode(['erp_order_id' => $erpOrderId]));
+            Log::info("Shopify order #{$shopifyOrderId} → ERP #{$erpOrderId} [{$this->erp->driverName()}]");
 
-            return $odooOrderId;
+            return $erpOrderId;
         } catch (\Throwable $e) {
             $log->markFailed($e->getMessage(), ['trace' => substr($e->getTraceAsString(), 0, 500)]);
             throw $e;
         }
     }
 
-    // ────────────────────────────────────────────────────────────────────
-    // Private helpers
-    // ────────────────────────────────────────────────────────────────────
+    /**
+     * Kept for backwards compatibility with existing job calls.
+     * @deprecated Use createInErp() for new code.
+     */
+    public function createInOdoo(array $shopifyOrder): int
+    {
+        return $this->createInErp($shopifyOrder);
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────────
 
     private function resolveOrCreatePartner(array $shopifyOrder): int
     {
         $email = $shopifyOrder['email'] ?? '';
 
         if ($email) {
-            $existing = $this->odooCustomers->findByEmail($email);
+            $existing = $this->erp->findCustomerByEmail($email);
             if ($existing) return $existing['id'];
         }
 
@@ -132,9 +132,9 @@ class OrderSyncService
         $stateId   = null;
 
         if (!empty($billing['country_code'])) {
-            $countryId = $this->odooCustomers->resolveCountry($billing['country_code']);
+            $countryId = $this->erp->resolveCountry($billing['country_code']);
             if ($countryId && !empty($billing['province_code'])) {
-                $stateId = $this->odooCustomers->resolveState($countryId, $billing['province_code']);
+                $stateId = $this->erp->resolveState($countryId, $billing['province_code']);
             }
         }
 
@@ -154,7 +154,7 @@ class OrderSyncService
         if ($countryId) $partnerData['country_id'] = $countryId;
         if ($stateId)   $partnerData['state_id']   = $stateId;
 
-        return $this->odooCustomers->create($partnerData);
+        return $this->erp->createCustomer($partnerData);
     }
 
     private function buildOrderLines(array $lineItems, array $shopifyOrder): array
@@ -179,10 +179,9 @@ class OrderSyncService
                 $line[2]['name'] .= ' [MISSING PRODUCT]';
             }
 
-            // ── Wire: Tax mapping ────────────────────────────────────────
             $taxIds = $this->resolveTaxIds($item['tax_lines'] ?? [], ChannelMapping::CHANNEL_SHOPIFY);
             if ($taxIds) {
-                $line[2]['tax_id'] = [[6, 0, $taxIds]]; // Odoo many2many replace command
+                $line[2]['tax_id'] = [[6, 0, $taxIds]];
             }
 
             $lines[] = $line;
@@ -199,9 +198,7 @@ class OrderSyncService
             'price_unit'      => (float) $shippingLine['price'],
         ]];
 
-        // ── Wire: Shipping mapping → Odoo delivery product ──────────────
-        $shippingTitle  = $shippingLine['title'] ?? '';
-        $shippingProdId = $this->channelMappings->odooShippingProduct($shippingTitle);
+        $shippingProdId = $this->channelMappings->odooShippingProduct($shippingLine['title'] ?? '');
         if ($shippingProdId) {
             $line[2]['product_id'] = (int) $shippingProdId;
         }
@@ -209,15 +206,11 @@ class OrderSyncService
         return $line;
     }
 
-    /**
-     * Resolve Shopify tax lines → Odoo tax IDs via Tax mapping.
-     */
     private function resolveTaxIds(array $taxLines, string $channel): array
     {
         $taxIds = [];
         foreach ($taxLines as $taxLine) {
-            $title = $taxLine['title'] ?? '';
-            $taxId = $this->channelMappings->odooTax($title, $channel);
+            $taxId = $this->channelMappings->odooTax($taxLine['title'] ?? '', $channel);
             if ($taxId) {
                 $taxIds[] = (int) $taxId;
             }

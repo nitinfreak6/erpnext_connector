@@ -6,40 +6,40 @@ use App\Exceptions\ShopifyApiException;
 use App\Models\SyncLog;
 use App\Models\SyncMapping;
 use App\Services\ChannelMappingService;
+use App\Services\Erp\ErpInterface;
 use App\Services\MappingService;
-use App\Services\Odoo\OdooProductService;
 use App\Services\Shopify\ShopifyProductService;
 use Illuminate\Support\Facades\Log;
 
 class ProductSyncService
 {
     public function __construct(
-        private readonly OdooProductService    $odooProducts,
+        private readonly ErpInterface          $erp,         // ← was OdooProductService
         private readonly ShopifyProductService $shopifyProducts,
         private readonly MappingService        $mappings,
         private readonly ChannelMappingService $channelMappings,
     ) {}
 
     /**
-     * Sync a single Odoo product template to Shopify.
+     * Sync a single ERP product template to Shopify.
      *
      * Pass $cachedVariants and $cachedAttributeValues from the JSON cache
-     * to avoid calling Odoo again. If not provided, falls back to Odoo API.
+     * to avoid calling the ERP again. If not provided, falls back to ERP API.
      */
     public function syncProduct(
-        array  $odooTemplate,
-        ?array $cachedVariants         = null,
-        ?array $cachedAttributeValues  = null,
+        array  $erpTemplate,
+        ?array $cachedVariants        = null,
+        ?array $cachedAttributeValues = null,
     ): string {
-        $odooId = (string) $odooTemplate['id'];
+        $erpId = (string) $erpTemplate['id'];
 
-        // ── Use cached data if provided, otherwise fall back to Odoo API ─
+        // ── Use cached data if provided, otherwise fall back to ERP API ──
         if ($cachedVariants !== null) {
             $variants = $cachedVariants;
-            Log::debug("ProductSyncService: using cached variants for #{$odooId} (no Odoo call)");
+            Log::debug("ProductSyncService: using cached variants for #{$erpId} (no ERP call)");
         } else {
-            $variants = $this->odooProducts->getVariantsForTemplates([$odooTemplate['id']]);
-            Log::debug("ProductSyncService: fetched variants from Odoo for #{$odooId}");
+            $variants = $this->erp->getVariantsForProducts([$erpTemplate['id']]);
+            Log::debug("ProductSyncService: fetched variants from ERP for #{$erpId}");
         }
 
         if ($cachedAttributeValues !== null) {
@@ -50,30 +50,30 @@ class ProductSyncService
                 $avIds = array_merge($avIds, $v['product_template_attribute_value_ids'] ?? []);
             }
             $attributeValues = $avIds
-                ? $this->odooProducts->getAttributeValues(array_unique($avIds))
+                ? $this->erp->getAttributeValues(array_unique($avIds))
                 : [];
         }
 
-        // ── Wire: remap size attribute values via ProductSize mapping ────
+        // ── Remap size attributes via ProductSize channel mapping ────────
         $attributeValues = $this->remapSizeAttributes($attributeValues);
 
-        // ── Wire: resolve Shopify product_type via Category mapping ──────
-        $shopifyProductType = $this->resolveProductType($odooTemplate);
+        // ── Resolve Shopify product_type via Category channel mapping ────
+        $shopifyProductType = $this->resolveProductType($erpTemplate);
 
-        // Build payload
+        // Build Shopify payload (ShopifyProductService is ERP-agnostic)
         $payload = $this->shopifyProducts->buildPayload(
-            array_merge($odooTemplate, ['_shopify_product_type' => $shopifyProductType]),
+            array_merge($erpTemplate, ['_shopify_product_type' => $shopifyProductType]),
             $variants,
             $attributeValues
         );
 
-        // Check existing mapping
-        $mapping = $this->mappings->findByOdooId(SyncMapping::TYPE_PRODUCT, $odooId);
+        // Check for existing mapping
+        $mapping = $this->mappings->findByOdooId(SyncMapping::TYPE_PRODUCT, $erpId);
 
         $log = SyncLog::create([
             'direction'       => SyncLog::DIRECTION_ODOO_TO_SHOPIFY,
             'entity_type'     => SyncMapping::TYPE_PRODUCT,
-            'entity_id'       => $odooId,
+            'entity_id'       => $erpId,
             'action'          => $mapping ? 'update' : 'create',
             'status'          => SyncLog::STATUS_PROCESSING,
             'request_payload' => json_encode($payload),
@@ -87,7 +87,7 @@ class ProductSyncService
                 } catch (ShopifyApiException $e) {
                     if ($e->getHttpStatus() === 404) {
                         Log::warning('Shopify product not found for mapped ID; creating new.', [
-                            'odoo_id'    => $odooId,
+                            'erp_id'     => $erpId,
                             'shopify_id' => $mapping->shopify_id,
                         ]);
                         $shopifyProduct = $this->shopifyProducts->create($payload);
@@ -103,7 +103,7 @@ class ProductSyncService
 
             $shopifyProductId = (string) $shopifyProduct['id'];
 
-            $this->mappings->upsert(SyncMapping::TYPE_PRODUCT, $odooId, $shopifyProductId, [
+            $this->mappings->upsert(SyncMapping::TYPE_PRODUCT, $erpId, $shopifyProductId, [
                 'shopify_handle' => $shopifyProduct['handle'] ?? null,
                 'last_synced_at' => now(),
             ]);
@@ -111,7 +111,7 @@ class ProductSyncService
             $this->syncVariantMappings($variants, $shopifyProduct['variants'] ?? []);
 
             $log->markSuccess(json_encode($shopifyProduct));
-            Log::info("Product synced: Odoo #{$odooId} → Shopify #{$shopifyProductId}", ['action' => $action]);
+            Log::info("Product synced: ERP #{$erpId} → Shopify #{$shopifyProductId} [{$this->erp->driverName()}]", ['action' => $action]);
 
             return $shopifyProductId;
         } catch (\Throwable $e) {
@@ -120,22 +120,21 @@ class ProductSyncService
         }
     }
 
-    // ── Private helpers (unchanged) ──────────────────────────────────────
+    // ── Private helpers ──────────────────────────────────────────────────
 
-    private function resolveProductType(array $odooTemplate): ?string
+    private function resolveProductType(array $erpTemplate): ?string
     {
-        $categoryId = is_array($odooTemplate['categ_id'] ?? null)
-            ? (string) $odooTemplate['categ_id'][0]
-            : (string) ($odooTemplate['categ_id'] ?? '');
+        $categoryId = is_array($erpTemplate['categ_id'] ?? null)
+            ? (string) $erpTemplate['categ_id'][0]
+            : (string) ($erpTemplate['categ_id'] ?? '');
 
         if (!$categoryId) return null;
 
         $mapped = $this->channelMappings->shopifyCategory($categoryId);
-
         if ($mapped) return $mapped;
 
-        return is_array($odooTemplate['categ_id'] ?? null)
-            ? ($odooTemplate['categ_id'][1] ?? null)
+        return is_array($erpTemplate['categ_id'] ?? null)
+            ? ($erpTemplate['categ_id'][1] ?? null)
             : null;
     }
 
@@ -148,9 +147,7 @@ class ProductSyncService
                 continue;
             }
 
-            $odooValue  = $av['name'] ?? '';
-            $shopifyVal = $this->channelMappings->shopifySize($odooValue);
-
+            $shopifyVal = $this->channelMappings->shopifySize($av['name'] ?? '');
             if ($shopifyVal) {
                 $av['_mapped_name'] = $shopifyVal;
             }
@@ -160,7 +157,7 @@ class ProductSyncService
         return $attributeValues;
     }
 
-    private function syncVariantMappings(array $odooVariants, array $shopifyVariants): void
+    private function syncVariantMappings(array $erpVariants, array $shopifyVariants): void
     {
         $shopifyBySku     = [];
         $shopifyByBarcode = [];
@@ -170,15 +167,15 @@ class ProductSyncService
             if (!empty($sv['barcode'])) $shopifyByBarcode[$sv['barcode']] = $sv;
         }
 
-        foreach ($odooVariants as $odooVariant) {
-            $sku     = $odooVariant['default_code'] ?? '';
-            $barcode = $odooVariant['barcode'] ?? '';
+        foreach ($erpVariants as $erpVariant) {
+            $sku     = $erpVariant['default_code'] ?? '';
+            $barcode = $erpVariant['barcode'] ?? '';
 
             if ($sku && isset($shopifyBySku[$sku])) {
                 $sv = $shopifyBySku[$sku];
             } elseif ($barcode && isset($shopifyByBarcode[$barcode])) {
                 $sv = $shopifyByBarcode[$barcode];
-            } elseif (count($odooVariants) === 1 && count($shopifyVariants) === 1) {
+            } elseif (count($erpVariants) === 1 && count($shopifyVariants) === 1) {
                 $sv = $shopifyVariants[0];
             } else {
                 continue;
@@ -186,7 +183,7 @@ class ProductSyncService
 
             $this->mappings->upsert(
                 SyncMapping::TYPE_PRODUCT_VARIANT,
-                (string) $odooVariant['id'],
+                (string) $erpVariant['id'],
                 (string) $sv['id'],
                 [
                     'shopify_secondary_id' => (string) ($sv['inventory_item_id'] ?? ''),

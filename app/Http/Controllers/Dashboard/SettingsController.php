@@ -7,12 +7,16 @@ use App\Models\ConnectorSetting;
 use App\Services\SettingsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 
 class SettingsController extends Controller
 {
     public function __construct(private readonly SettingsService $settings) {}
 
+    /**
+     * Global Settings page — all groups as expandable accordion sections.
+     */
     public function index()
     {
         $groups = ConnectorSetting::where('is_active', true)
@@ -20,48 +24,77 @@ class SettingsController extends Controller
             ->get()
             ->groupBy('group');
 
-        return view('dashboard.settings', compact('groups'));
+        // Section metadata — labels, icons, descriptions for each group
+        $sectionMeta = [
+            'general'  => [
+                'label'       => 'Common Settings',
+                'icon'        => '⚙️',
+                'description' => 'ERP driver selection and global sync feature flags',
+                'color'       => 'indigo',
+            ],
+            'odoo'     => [
+                'label'       => 'Odoo Settings',
+                'icon'        => '🔗',
+                'description' => 'Odoo ERP connection credentials',
+                'color'       => 'purple',
+            ],
+            'shopify'  => [
+                'label'       => 'Shopify Settings',
+                'icon'        => '🛍️',
+                'description' => 'Shopify store credentials and sync behaviour',
+                'color'       => 'green',
+            ],
+            'amazon'   => [
+                'label'       => 'Amazon Settings',
+                'icon'        => '📦',
+                'description' => 'Amazon SP-API credentials and marketplace config',
+                'color'       => 'amber',
+            ],
+        ];
+
+        return view('dashboard.settings', compact('groups', 'sectionMeta'));
     }
 
+    /**
+     * Save all settings from the global settings page in one POST.
+     */
     public function update(Request $request)
     {
-        $inputs = $request->except(['_token', '_method', 'group']);
-        $group  = $request->input('group');
+        $inputs = $request->except(['_token', '_method']);
 
         foreach ($inputs as $key => $value) {
-            $setting = ConnectorSetting::where('key', $key)->where('group', $group)->first();
-
+            $setting = ConnectorSetting::where('key', $key)->first();
             if (!$setting) continue;
 
-            // Skip secrets that were left blank (keep existing)
+            // Skip blank secrets — keep existing value
             if ($setting->is_secret && ($value === '' || $value === null)) {
                 continue;
             }
 
             if ($setting->is_secret && $value !== '' && $value !== null) {
-				$setting->value = Crypt::encryptString($value);
-				$setting->saveQuietly();
-			} else {
-				$setting->update(['value' => $value]);
-			}
+                $setting->value = Crypt::encryptString($value);
+                $setting->saveQuietly();
+            } else {
+                $setting->update(['value' => $value]);
+            }
         }
 
         $this->settings->clearCache();
 
+        // Also clear ERP driver cache so new driver takes effect immediately
+        Cache::forget('connector_settings_all');
+
         return redirect()->route('dashboard.settings')
-            ->with('success', ucfirst($group) . ' settings saved successfully.');
+            ->with('success', 'Global settings saved successfully.');
     }
 
     /**
-     * Reveal a secret value — admin only, logged.
+     * Reveal a secret value — admin only.
      */
     public function reveal(Request $request, ConnectorSetting $setting)
     {
         abort_unless(auth()->user()->can('reveal-secrets'), 403);
-
-        $value = $setting->getDecryptedValue();
-
-        return response()->json(['value' => $value]);
+        return response()->json(['value' => $setting->getDecryptedValue()]);
     }
 
     /**

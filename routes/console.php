@@ -1,4 +1,5 @@
 <?php
+
 use Illuminate\Support\Facades\Schedule;
 
 // ── Shopify Sync ──────────────────────────────────────────
