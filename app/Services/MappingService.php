@@ -39,7 +39,7 @@ class MappingService
     ): SyncMapping {
         return SyncMapping::updateOrCreate(
             ['entity_type' => $entityType, 'odoo_id' => $odooId],
-            array_merge(['shopify_id' => $shopifyId], $extra)
+            array_merge(['shopify_id' => $shopifyId , 'last_synced_at' => now(), ], $extra)
         );
     }
 

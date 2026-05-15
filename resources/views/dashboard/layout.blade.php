@@ -309,13 +309,7 @@
                 {{-- Manual sync trigger (manager+) --}}
                 @if(auth()->user()->hasPermission('trigger-sync'))
                 <div x-data="{ open: false }" class="relative">
-                    <button @click="open = !open"
-                            class="inline-flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg transition">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                        </svg>
-                        Sync Now
-                    </button>
+                   
                     <div x-show="open" x-cloak @click.outside="open = false"
                          class="absolute right-0 top-10 w-52 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1">
                         @foreach([

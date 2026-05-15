@@ -2,59 +2,50 @@
 
 namespace App\Console\Commands;
 
-use App\Jobs\Odoo\FetchOdooProductsJob;
-use App\Services\SettingsService;
-use App\Services\Odoo\OdooProductService;
+use App\Jobs\Erp\FetchErpProductsJob;   // ← changed from FetchOdooProductsJob
+use App\Models\SyncQueueState;
+use App\Services\Erp\ErpInterface;      // ← changed from OdooProductService
 use Illuminate\Console\Command;
 
 class SyncProducts extends Command
 {
     protected $signature = 'sync:products
-                            {--full : Ignore cursor, sync all active products}
-                            {--limit=0 : Max number of products to process (0 = unlimited)}
-                            {--dry-run : Print products without dispatching jobs}';
+                            {--full    : Ignore write_date cursor and sync ALL active products}
+                            {--dry-run : Print state without dispatching}
+                            {--status  : Show current cursor and queue state, then exit}';
 
-    protected $description = 'Sync ERP products → Shopify';
+    protected $description = 'Fetch ERP products → JSON cache only (incremental by default). No push.';
 
-    public function handle(OdooProductService $odooProducts, SettingsService $settings): int
+    public function handle(): int
     {
-        // ── Master switch check ──────────────────────────────────────────
-        if (!$settings->isProductSyncEnabled()) {
-            $this->warn('Product sync is disabled in Global Settings (Enable Product Sync = off). Skipping.');
+        if ($this->option('status')) {
+            $state = SyncQueueState::forType('products');
+            $this->table(['Field', 'Value'], [
+                ['Last write_date cursor', $state->last_odoo_write_date ?? '<none>'],
+                ['Last polled',            $state->last_poll_at?->diffForHumans() ?? 'never'],
+                ['Currently running',      $state->is_running ? 'YES' : 'no'],
+                ['Last error',             $state->notes ?? '-'],
+            ]);
             return self::SUCCESS;
         }
 
-        if (!$settings->isShopifyChannelEnabled()) {
-            $this->warn('Shopify channel is disabled in Global Settings. Skipping.');
+        if ($this->option('dry-run')) {
+            $this->info('Dry run — no jobs dispatched.');
             return self::SUCCESS;
         }
 
-        $full   = $this->option('full');
-        $limit  = (int) $this->option('limit');
-        $dryRun = $this->option('dry-run');
+        $full = (bool) $this->option('full');
 
-        $this->info('Starting product sync' . ($full ? ' (FULL)' : '') . ($dryRun ? ' [DRY RUN]' : '') . '...');
+        $this->info('Fetching products from ERP' . ($full ? ' (FULL)' : ' (incremental)') . '...');
 
-        if ($dryRun) {
-            $products = $odooProducts->getAllActive(0, $limit ?: 100);
-
-            $this->table(['ID', 'Name', 'Write Date'], array_map(fn($p) => [
-                $p['id'], $p['name'], $p['write_date'] ?? '',
-            ], $products));
-
-            $this->info(count($products) . ' product(s) would be synced.');
-            return self::SUCCESS;
-        }
-
-        FetchOdooProductsJob::dispatch(
-            fullSync: $full || $limit > 0,
-            shopify:  true,
+        // fetch only — shopify/amazon flags are FALSE, push is handled by sync:push-products
+        FetchErpProductsJob::dispatchSync(
+            fullSync: $full,
+            shopify:  false,
             amazon:   false,
         );
 
-        $this->info('FetchOdooProductsJob dispatched to queue.');
-        $this->line("Run <info>php artisan queue:work --queue=sync</info> to process.");
-
+        $this->info('Done.');
         return self::SUCCESS;
     }
 }

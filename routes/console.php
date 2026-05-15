@@ -9,11 +9,21 @@ Schedule::command('sync:inventory')
     ->runInBackground()
     ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('sync:inventory failed'));
 
+// routes/console.php
+
+// Cron 1: Fetch — runs at :00 and :30 of every hour
 Schedule::command('sync:products')
-    ->everyFifteenMinutes()
-    ->withoutOverlapping()
+    ->cron('0,30 * * * *')
+    ->withoutOverlapping(10)
     ->runInBackground()
     ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('sync:products failed'));
+
+// Cron 2: Push — runs at :10 and :40 of every hour (10 min after fetch)
+Schedule::command('sync:push-products --channel=both')
+    ->cron('10,40 * * * *')
+    ->withoutOverlapping(15)
+    ->runInBackground()
+    ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('sync:push-products failed'));
 
 Schedule::command('sync:orders')
     ->hourly()

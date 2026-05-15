@@ -3,21 +3,31 @@
 namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
-use App\Jobs\Odoo\FetchOdooProductsJob;
+use App\Jobs\Erp\FetchErpProductsJob;
+use App\Jobs\Shopify\PushProductToShopifyJob;
+use App\Jobs\Amazon\PushProductToAmazonJob;
 use App\Models\SyncLog;
 use App\Models\SyncMapping;
 use App\Services\ProductCacheService;
+use App\Services\SettingsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
 class ProductsController extends Controller
 {
-    public function __construct(private readonly ProductCacheService $cache) {}
+    public function __construct(
+        private readonly ProductCacheService $cache,
+        private readonly SettingsService     $settings,
+    ) {}
+
+    // ── Index ────────────────────────────────────────────────────────────
 
     public function index(Request $request)
     {
         $search  = $request->input('search');
         $channel = $request->input('channel', 'all');
+        $status  = $request->input('status', 'all');
+        $perPage = (int) $request->input('per_page', 25);
 
         $entityTypes = match ($channel) {
             'shopify' => ['product'],
@@ -37,19 +47,15 @@ class ProductsController extends Controller
             });
         }
 
-        $products = $query->paginate(50)->withQueryString();
+        $products = $query->paginate($perPage)->withQueryString();
 
+        // Variant counts per shopify product
         $variantCounts = SyncMapping::where('entity_type', 'product_variant')
             ->selectRaw('COUNT(*) as count, shopify_id')
             ->groupBy('shopify_id')
             ->pluck('count', 'shopify_id');
 
-        $recentLogs = SyncLog::whereIn('entity_type', ['product', 'amazon_product', 'amazon_variant'])
-            ->orderByDesc('created_at')
-            ->limit(10)
-            ->get();
-
-        // Check which odoo IDs have a cached JSON file
+        // Check which odoo IDs have cached JSON
         $cachedIds = [];
         foreach ($products as $mapping) {
             $path = 'products/' . $mapping->odoo_id . '.json';
@@ -57,18 +63,28 @@ class ProductsController extends Controller
                 $cachedIds[] = (int) $mapping->odoo_id;
             }
         }
-		
+
+        // Load cached template data for status column
+        $cachedStatuses = [];
+        foreach ($cachedIds as $odooId) {
+            try {
+                $json = Storage::disk('local')->get("products/{$odooId}.json");
+                $data = json_decode($json, true);
+                $cachedStatuses[$odooId] = $data['template']['active'] ?? null;
+            } catch (\Throwable) {}
+        }
+
+        // Shopify store name
+        $shopifyStore = $this->settings->shopifyShop() ?: config('shopify.shop', '—');
 
         return view('dashboard.products', compact(
-            'products', 'search', 'channel', 'variantCounts', 'recentLogs', 'cachedIds'
+            'products', 'search', 'channel', 'status', 'perPage',
+            'variantCounts', 'cachedIds', 'cachedStatuses', 'shopifyStore'
         ));
     }
 
-    /**
-     * Show raw Odoo data for a product — reads from JSON cache, never calls Odoo.
-     * Also previews what the Shopify payload would look like.
-     * Also shows the last Shopify API response from sync_logs.
-     */
+    // ── Show (product detail / cached JSON) ──────────────────────────────
+
     public function show(int $odooId)
     {
         $path = 'products/' . $odooId . '.json';
@@ -79,7 +95,7 @@ class ProductsController extends Controller
 
         $data = json_decode(Storage::disk('local')->get($path), true);
 
-        // Build Shopify payload preview from cached data — no Odoo API call
+        // Build Shopify payload preview from cached data
         $shopifyPayload = [];
         try {
             $shopifyService = app(\App\Services\Shopify\ShopifyProductService::class);
@@ -92,8 +108,8 @@ class ProductsController extends Controller
             $shopifyPayload = ['_error' => $e->getMessage()];
         }
 
-        // Load latest Shopify sync response from sync_logs
-        $syncLog = \App\Models\SyncLog::where('entity_type', 'product')
+        // Latest sync log for this product
+        $syncLog = SyncLog::where('entity_type', 'product')
             ->where('entity_id', (string) $odooId)
             ->whereIn('status', ['success', 'failed'])
             ->latest()
@@ -109,34 +125,84 @@ class ProductsController extends Controller
         ));
     }
 
-    /**
-     * Trigger a full fetch from Odoo → saves JSON files → sync_mappings populated via jobs.
-     * Odoo is called ONCE here. All subsequent pushes read from JSON files.
-     */
-    public function fetch(Request $request)
-    {
-        // Dispatch full sync job — fetches from Odoo, caches each product as JSON,
-        // then dispatches PushProductToShopifyJob / PushProductToAmazonJob which
-        // read from JSON (no further Odoo calls).
-        FetchOdooProductsJob::dispatch(
-            fullSync: true,
-            shopify: true,
-            amazon: true,
-        );
+    // ── Fetch ALL products from ERP ───────────────────────────────────────
 
-        return back()->with('success', 'Fetch Products job dispatched. Products will appear once the queue worker processes it.');
+    public function fetch()
+    {
+        FetchErpProductsJob::dispatchSync(fullSync: true, shopify: false, amazon: false);
+		return back()->with('success', 'All products fetched from ERP successfully.');
     }
 
-    /**
-     * Refresh cache for a single product from Odoo.
-     */
-    public function refresh(int $odooId)
+    // ── Post ALL products to Shopify + Amazon ─────────────────────────────
+
+    public function postAll(Request $request)
+    {
+        $channel = $request->input('channel', 'both');
+
+        // Get all product IDs from sync_mappings
+        $odooIds = SyncMapping::where('entity_type', 'product')
+            ->pluck('odoo_id')
+            ->toArray();
+
+        $queued = 0;
+        foreach ($odooIds as $odooId) {
+            $path = 'products/' . $odooId . '.json';
+            if (!Storage::disk('local')->exists($path)) continue;
+
+            if (in_array($channel, ['shopify', 'both'])) {
+                PushProductToShopifyJob::dispatchSync((int) $odooId);
+            }
+            if (in_array($channel, ['amazon', 'both'])) {
+                PushProductToAmazonJob::dispatchSync((int) $odooId);
+            }
+            $queued++;
+        }
+
+        return back()->with('success', "Synced {$queued} products successfully.");
+    }
+
+    // ── Fetch single product from ERP ────────────────────────────────────
+
+    public function fetchSingle(int $odooId)
     {
         try {
             $this->cache->fetchAndCacheSingle($odooId);
-            return back()->with('success', "Product #{$odooId} cache refreshed from Odoo.");
+            return back()->with('success', "Product #{$odooId} fetched and cached from ERP.");
         } catch (\Throwable $e) {
-            return back()->with('error', "Failed to refresh #{$odooId}: " . $e->getMessage());
+            return back()->with('error', "Fetch failed for #{$odooId}: " . $e->getMessage());
         }
+    }
+
+    // ── Post single product to Shopify/Amazon ─────────────────────────────
+
+    public function postSingle(Request $request, int $odooId)
+    {
+        $path = 'products/' . $odooId . '.json';
+
+        if (!Storage::disk('local')->exists($path)) {
+            return back()->with('error', "No cached data for #{$odooId}. Fetch the product first.");
+        }
+
+        $channel = $request->input('channel', 'both');
+        $queued  = 0;
+
+        if (in_array($channel, ['shopify', 'both'])) {
+            PushProductToShopifyJob::dispatchSync($odooId);
+            $queued++;
+        }
+
+        if (in_array($channel, ['amazon', 'both'])) {
+            PushProductToAmazonJob::dispatchSync($odooId);
+            $queued++;
+        }
+
+        return back()->with('success', "Product #{$odooId} synced to " . strtoupper($channel) . " successfully.");
+    }
+
+    // ── Refresh (alias for fetchSingle) ──────────────────────────────────
+
+    public function refresh(int $odooId)
+    {
+        return $this->fetchSingle($odooId);
     }
 }

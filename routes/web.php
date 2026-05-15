@@ -39,10 +39,25 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
     Route::get('/', [OverviewController::class, 'index'])->name('');
 
     // Sync data views (viewer+)
-    Route::get('/products',             [ProductsController::class, 'index']) ->name('.products');
-	Route::get('/products/{odooId}',    [ProductsController::class, 'show'])  ->name('.products.show');
-	Route::post('/products/fetch',      [ProductsController::class, 'fetch']) ->name('.products.fetch');
-	Route::patch('/products/{odooId}/refresh', [ProductsController::class, 'refresh'])->name('.products.refresh');
+    Route::prefix('products')->name('.products')->group(function () {
+		Route::get('/',                          [ProductsController::class, 'index'])      ->name('');
+		Route::get('/{odooId}',                  [ProductsController::class, 'show'])       ->name('.show');
+	 
+		// Fetch all from ERP (no push)
+		Route::post('/fetch',                    [ProductsController::class, 'fetch'])      ->name('.fetch');
+	 
+		// Post all cached products to Shopify/Amazon
+		Route::post('/post-all',                 [ProductsController::class, 'postAll'])    ->name('.post-all');
+	 
+		// Fetch single product from ERP
+		Route::post('/{odooId}/fetch',           [ProductsController::class, 'fetchSingle'])->name('.fetch-single');
+	 
+		// Post single product
+		Route::post('/{odooId}/post',            [ProductsController::class, 'postSingle']) ->name('.post-single');
+	 
+		// Refresh (alias for fetch-single — kept for backward compat)
+		Route::patch('/{odooId}/refresh',        [ProductsController::class, 'refresh'])    ->name('.refresh');
+	});
  
     Route::get('/orders',    [OrdersController::class, 'index'])->name('.orders');
     Route::get('/inventory', [InventoryController::class, 'index'])->name('.inventory');
