@@ -7,6 +7,7 @@ use App\Jobs\Shopify\PushProductToShopifyJob;
 use App\Models\SyncQueueState;
 use App\Services\Erp\ErpInterface;
 use App\Services\ProductCacheService;
+use App\Services\SettingsService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -26,12 +27,18 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
         private readonly bool   $shopify  = true,
         private readonly bool   $amazon   = true,
         private readonly ?array $erpIds   = null,
-    ) {
-        
-    }
+    ) {}
 
-    public function handle(ErpInterface $erp, ProductCacheService $cache): void
+    public function handle(ErpInterface $erp, ProductCacheService $cache, SettingsService $settings): void
     {
+        // ── Master switch check ─────────────────────────────────────────
+        // Always honour the setting, even when the job is dispatched directly
+        // (e.g. from the manual sync button or another job).
+        if (! $settings->isProductSyncEnabled()) {
+            Log::info('FetchErpProductsJob: skipped — product sync is disabled in settings.');
+            return;
+        }
+
         $state = SyncQueueState::forType('products');
 
         if ($state->is_running && !$this->erpIds) {
@@ -82,7 +89,6 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
         $dispatched      = 0;
 
         foreach ($products as $product) {
-            // ── FIX: cacheProduct() takes ONE product, not the whole array ──
             try {
                 $cache->cacheProduct($product);
             } catch (\Throwable $e) {
@@ -123,7 +129,6 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
             }
 
             foreach ($products as $product) {
-                // ── FIX: cacheProduct() takes ONE product, not the whole array ──
                 try {
                     $cache->cacheProduct($product);
                 } catch (\Throwable $e) {

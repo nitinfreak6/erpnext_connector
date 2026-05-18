@@ -47,7 +47,7 @@
         <span class="text-sm font-medium text-gray-700">{{ $variants->total() }} SKU mappings</span>
         <form method="GET" class="flex gap-2">
             <input type="text" name="search" value="{{ $search }}"
-                   placeholder="SKU, Odoo ID…"
+                   placeholder="SKU, {{ $erpDisplayName }} ID…"
                    class="border border-gray-200 rounded-lg px-3 py-1 text-xs w-48 focus:ring-2 focus:ring-indigo-300 outline-none">
             <button class="text-xs bg-indigo-600 text-white px-3 py-1 rounded-lg hover:bg-indigo-700">Search</button>
         </form>
@@ -56,10 +56,10 @@
         <table class="w-full text-sm">
             <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                 <tr>
-                    <th class="px-4 py-3 text-left font-medium">SKU (Odoo Ref)</th>
-                    <th class="px-4 py-3 text-left font-medium">Odoo Variant ID</th>
-                    <th class="px-4 py-3 text-left font-medium">Shopify Variant ID</th>
-                    <th class="px-4 py-3 text-left font-medium">Shopify Inventory Item ID</th>
+                    <th class="px-4 py-3 text-left font-medium">SKU ({{ $erpDisplayName }} Ref)</th>
+                    <th class="px-4 py-3 text-left font-medium">{{ $erpDisplayName }} Variant ID</th>
+                    <th class="px-4 py-3 text-left font-medium">{{ $ecomDisplayName  }} Variant ID</th>
+                    <th class="px-4 py-3 text-left font-medium">{{ $ecomDisplayName  }} Inventory Item ID</th>
                     <th class="px-4 py-3 text-left font-medium">Last Synced</th>
                 </tr>
             </thead>
@@ -77,10 +77,10 @@
                 @empty
                 <tr>
                     <td colspan="5" class="px-4 py-12 text-center text-gray-400">
-                        No variant mappings with Shopify inventory item IDs.
+                        No variant mappings with {{ $ecomDisplayName  }} inventory item IDs.
                         <div class="text-xs text-gray-400 mt-2">
                             Run <span class="font-mono bg-gray-100 px-1.5 py-0.5 rounded">php artisan sync:products --full</span>
-                            and ensure Shopify variant SKUs match Odoo <span class="font-mono">default_code</span>.
+                            and ensure {{ $ecomDisplayName  }} variant SKUs match {{ $erpDisplayName }} <span class="font-mono">default_code</span>.
                         </div>
                     </td>
                 </tr>

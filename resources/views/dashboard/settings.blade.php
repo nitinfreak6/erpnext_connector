@@ -34,7 +34,8 @@
     .reveal-btn:disabled { opacity:0.4; cursor:not-allowed; }
     .toggle-wrap { display:flex; align-items:center; gap:10px; padding-top:6px; }
     .toggle-track { position:relative; display:inline-flex; align-items:center; width:44px; height:24px; border-radius:999px; background:#d1d5db; cursor:pointer; transition:background 0.2s; }
-    .toggle-track.on { background:#1e293b; }
+    .toggle-track.on { background:#f97316; }
+    /* dir-cards use their own scoped colour via inline style — no override needed */
     .toggle-thumb { position:absolute; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,0.2); transition:transform 0.2s; }
     .toggle-track.on .toggle-thumb { transform:translateX(20px); }
     .toggle-label { font-size:13px; color:#6b7280; }
@@ -198,6 +199,370 @@
             </div>
         </div>
     @endforeach
+
+    {{-- ═══════════════════════════════════════════════════════════════════
+         Sync Direction Settings
+         Three cards: Product Settings | Customer Settings | Sales Settings
+         Each card has a toggle + a 3-option sync-mode selector:
+           [ERP → Shopify]  [Shopify → ERP]  [⇄ Both]
+    ═══════════════════════════════════════════════════════════════════ --}}
+    @php
+        /** @var \App\Services\SettingsService $ss */
+        $ss        = app(\App\Services\SettingsService::class);
+        $erpLabel  = $ss->erpDisplayName();   // e.g. "Odoo"
+        $ecomLabel = $ss->ecomDisplayName();  // e.g. "Shopify"
+    @endphp
+
+    <style>
+        /* ── Direction cards ──────────────────────────────────────── */
+        .dir-grid  { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; margin-bottom:20px; }
+        .dir-card  { background:#fff; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden; }
+
+        /* orange pill header */
+        .dir-pill  { display:inline-flex; align-items:center; gap:8px;
+                     margin:18px 18px 0 18px; padding:8px 20px;
+                     border-radius:999px; font-size:13px; font-weight:700; color:#fff;
+                     background:linear-gradient(135deg,#f97316,#ef4444);
+                     user-select:none; }
+
+        .dir-body  { padding:14px 18px 18px; }
+        .dir-row   { display:flex; align-items:center; justify-content:space-between;
+                     padding:10px 0; border-bottom:1px solid #f3f4f6; gap:12px; }
+        .dir-row:last-child { border-bottom:none; padding-bottom:0; }
+        .dir-label { font-size:12px; font-weight:600; color:#374151; white-space:nowrap; }
+
+        /* ── Sync-mode selector ───────────────────────────────────── */
+        /*
+         * Three pill buttons in a row:
+         *   [ERP → Shopify]   [Shopify → ERP]   [⇄ Both]
+         * Active pill: solid orange  |  Inactive: light grey border
+         */
+        .sync-mode-group { display:flex; gap:6px; flex-wrap:wrap; }
+        .smode-btn {
+            display:inline-flex; align-items:center; gap:5px;
+            padding:5px 11px; border-radius:999px; font-size:11px; font-weight:600;
+            border:1.5px solid #e5e7eb; background:#f9fafb; color:#6b7280;
+            cursor:pointer; transition:all .15s; user-select:none; white-space:nowrap;
+        }
+        .smode-btn:hover { border-color:#f97316; color:#f97316; background:#fff7ed; }
+        .smode-btn.active {
+            background:linear-gradient(135deg,#f97316,#ef4444);
+            border-color:transparent; color:#fff;
+            box-shadow:0 2px 8px rgba(249,115,22,.35);
+        }
+        .smode-arrow { font-size:13px; line-height:1; }
+
+        /* small flow diagram shown below active mode */
+        .flow-diagram {
+            display:flex; align-items:center; gap:6px;
+            margin-top:10px; padding:8px 12px;
+            background:#fff7ed; border:1px solid #fed7aa;
+            border-radius:8px; font-size:11px; color:#c2410c; font-weight:600;
+        }
+        .flow-diagram .flow-node {
+            background:#fff; border:1.5px solid #f97316; border-radius:6px;
+            padding:3px 9px; font-size:11px; color:#ea580c; font-weight:700;
+        }
+        .flow-diagram .flow-arrow { color:#f97316; font-size:14px; font-weight:700; }
+    </style>
+
+    <div class="dir-grid">
+
+        {{-- ══════════════════════════════════════════════════════════
+             PRODUCT SETTINGS
+        ══════════════════════════════════════════════════════════ --}}
+        @php $productMode = $ss->productSyncMode(); @endphp
+        <div class="dir-card">
+            <div class="dir-pill">
+                <span>−</span> Product Settings
+            </div>
+            <div class="dir-body">
+
+                {{-- Enable Product toggle --}}
+                <div class="dir-row"
+                     x-data="{ on: {{ $ss->isProductSyncEnabled() ? 'true' : 'false' }} }">
+                    <div class="dir-label">Enable Product</div>
+                    <div class="toggle-wrap" style="padding-top:0">
+                        <div class="toggle-track" :class="on?'on':''" @click="on=!on">
+                            <div class="toggle-thumb"></div>
+                        </div>
+                        <span class="toggle-label" x-text="on?'On':'Off'"
+                              :style="on?'color:#f97316;font-weight:700':''"></span>
+                        <input type="hidden" name="product_sync_enabled" :value="on?'1':'0'">
+                    </div>
+                </div>
+
+                {{-- Sync Mode selector --}}
+                <div class="dir-row" style="flex-direction:column; align-items:flex-start; gap:10px;"
+                     x-data="{ mode: '{{ $productMode }}' }">
+                    <div class="dir-label">Sync Direction</div>
+                    <input type="hidden" name="product_sync_mode" :value="mode">
+
+                    <div class="sync-mode-group">
+                        {{-- Option 1: ERP → Shopify --}}
+                        <button type="button"
+                                :class="mode==='erp_to_shopify' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='erp_to_shopify'">
+                            <span class="smode-arrow">→</span>
+                            {{ $erpLabel }} → {{ $ecomLabel }}
+                        </button>
+
+                        {{-- Option 2: Shopify → ERP --}}
+                        <button type="button"
+                                :class="mode==='shopify_to_erp' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='shopify_to_erp'">
+                            <span class="smode-arrow">→</span>
+                            {{ $ecomLabel }} → {{ $erpLabel }}
+                        </button>
+
+                        {{-- Option 3: Both / Bidirectional --}}
+                        <button type="button"
+                                :class="mode==='bidirectional' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='bidirectional'">
+                            <span class="smode-arrow">⇄</span>
+                            Both
+                        </button>
+                    </div>
+
+                    {{-- Live flow diagram --}}
+                    <div class="flow-diagram" x-show="mode==='erp_to_shopify'">
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                    </div>
+                    <div class="flow-diagram" x-show="mode==='shopify_to_erp'">
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                    </div>
+                    <div class="flow-diagram" x-show="mode==='bidirectional'">
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                        <span class="flow-arrow">⇄</span>
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                    </div>
+                </div>
+
+                {{-- Enable Products Linking toggle --}}
+                <div class="dir-row"
+                     x-data="{ on: {{ $ss->isProductLinkingEnabled() ? 'true' : 'false' }} }">
+                    <div class="dir-label">Enable Products Linking</div>
+                    <div class="toggle-wrap" style="padding-top:0">
+                        <div class="toggle-track" :class="on?'on':''" @click="on=!on">
+                            <div class="toggle-thumb"></div>
+                        </div>
+                        <span class="toggle-label" x-text="on?'On':'Off'"
+                              :style="on?'color:#f97316;font-weight:700':''"></span>
+                        <input type="hidden" name="product_linking_enabled" :value="on?'1':'0'">
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        {{-- ══════════════════════════════════════════════════════════
+             CUSTOMER SETTINGS
+        ══════════════════════════════════════════════════════════ --}}
+        @php $customerMode = $ss->customerSyncMode(); @endphp
+        <div class="dir-card">
+            <div class="dir-pill">
+                <span>−</span> Customer Settings
+            </div>
+            <div class="dir-body">
+
+                {{-- Enable Customer toggle --}}
+                <div class="dir-row"
+                     x-data="{ on: {{ $ss->isCustomerSyncEnabled() ? 'true' : 'false' }} }">
+                    <div class="dir-label">Enable Customer</div>
+                    <div class="toggle-wrap" style="padding-top:0">
+                        <div class="toggle-track" :class="on?'on':''" @click="on=!on">
+                            <div class="toggle-thumb"></div>
+                        </div>
+                        <span class="toggle-label" x-text="on?'On':'Off'"
+                              :style="on?'color:#f97316;font-weight:700':''"></span>
+                        <input type="hidden" name="customer_sync_enabled" :value="on?'1':'0'">
+                    </div>
+                </div>
+
+                {{-- Sync Mode selector --}}
+                <div class="dir-row" style="flex-direction:column; align-items:flex-start; gap:10px;"
+                     x-data="{ mode: '{{ $customerMode }}' }">
+                    <div class="dir-label">Sync Direction</div>
+                    <input type="hidden" name="customer_sync_mode" :value="mode">
+
+                    <div class="sync-mode-group">
+                        <button type="button"
+                                :class="mode==='erp_to_shopify' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='erp_to_shopify'">
+                            <span class="smode-arrow">→</span>
+                            {{ $erpLabel }} → {{ $ecomLabel }}
+                        </button>
+                        <button type="button"
+                                :class="mode==='shopify_to_erp' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='shopify_to_erp'">
+                            <span class="smode-arrow">→</span>
+                            {{ $ecomLabel }} → {{ $erpLabel }}
+                        </button>
+                        <button type="button"
+                                :class="mode==='bidirectional' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='bidirectional'">
+                            <span class="smode-arrow">⇄</span>
+                            Both
+                        </button>
+                    </div>
+
+                    <div class="flow-diagram" x-show="mode==='erp_to_shopify'">
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                    </div>
+                    <div class="flow-diagram" x-show="mode==='shopify_to_erp'">
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                    </div>
+                    <div class="flow-diagram" x-show="mode==='bidirectional'">
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                        <span class="flow-arrow">⇄</span>
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        {{-- ══════════════════════════════════════════════════════════
+             SALES SETTINGS
+        ══════════════════════════════════════════════════════════ --}}
+        @php
+            $salesMode    = $ss->salesOrderSyncMode();
+            $dispatchMode = $ss->dispatchSyncMode();
+        @endphp
+        <div class="dir-card">
+            <div class="dir-pill">
+                <span>−</span> Sales Settings
+            </div>
+            <div class="dir-body">
+
+                {{-- Enable Sales Order --}}
+                <div class="dir-row"
+                     x-data="{ on: {{ $ss->isSalesOrderSyncEnabled() ? 'true' : 'false' }} }">
+                    <div class="dir-label">Enable Sales Order</div>
+                    <div class="toggle-wrap" style="padding-top:0">
+                        <div class="toggle-track" :class="on?'on':''" @click="on=!on">
+                            <div class="toggle-thumb"></div>
+                        </div>
+                        <span class="toggle-label" x-text="on?'On':'Off'"
+                              :style="on?'color:#f97316;font-weight:700':''"></span>
+                        <input type="hidden" name="sales_order_sync_enabled" :value="on?'1':'0'">
+                    </div>
+                </div>
+
+                {{-- Sales Order Sync Mode --}}
+                <div class="dir-row" style="flex-direction:column; align-items:flex-start; gap:10px;"
+                     x-data="{ mode: '{{ $salesMode }}' }">
+                    <div class="dir-label">Sales Order Sync Direction</div>
+                    <input type="hidden" name="sales_order_sync_mode" :value="mode">
+
+                    <div class="sync-mode-group">
+                        <button type="button"
+                                :class="mode==='erp_to_shopify' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='erp_to_shopify'">
+                            <span class="smode-arrow">→</span>
+                            {{ $erpLabel }} → {{ $ecomLabel }}
+                        </button>
+                        <button type="button"
+                                :class="mode==='shopify_to_erp' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='shopify_to_erp'">
+                            <span class="smode-arrow">→</span>
+                            {{ $ecomLabel }} → {{ $erpLabel }}
+                        </button>
+                        <button type="button"
+                                :class="mode==='bidirectional' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='bidirectional'">
+                            <span class="smode-arrow">⇄</span>
+                            Both
+                        </button>
+                    </div>
+
+                    <div class="flow-diagram" x-show="mode==='erp_to_shopify'">
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                    </div>
+                    <div class="flow-diagram" x-show="mode==='shopify_to_erp'">
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                    </div>
+                    <div class="flow-diagram" x-show="mode==='bidirectional'">
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                        <span class="flow-arrow">⇄</span>
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                    </div>
+                </div>
+
+                {{-- Enable Dispatch Confirmation --}}
+                <div class="dir-row"
+                     x-data="{ on: {{ $ss->isDispatchConfirmationEnabled() ? 'true' : 'false' }} }">
+                    <div class="dir-label">Enable Dispatch Confirmation</div>
+                    <div class="toggle-wrap" style="padding-top:0">
+                        <div class="toggle-track" :class="on?'on':''" @click="on=!on">
+                            <div class="toggle-thumb"></div>
+                        </div>
+                        <span class="toggle-label" x-text="on?'On':'Off'"
+                              :style="on?'color:#f97316;font-weight:700':''"></span>
+                        <input type="hidden" name="dispatch_confirmation_enabled" :value="on?'1':'0'">
+                    </div>
+                </div>
+
+                {{-- Dispatch Confirmation Sync Mode --}}
+                <div class="dir-row" style="flex-direction:column; align-items:flex-start; gap:10px;"
+                     x-data="{ mode: '{{ $dispatchMode }}' }">
+                    <div class="dir-label">Dispatch Confirmation Direction</div>
+                    <input type="hidden" name="dispatch_sync_mode" :value="mode">
+
+                    <div class="sync-mode-group">
+                        <button type="button"
+                                :class="mode==='erp_to_shopify' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='erp_to_shopify'">
+                            <span class="smode-arrow">→</span>
+                            {{ $erpLabel }} → {{ $ecomLabel }}
+                        </button>
+                        <button type="button"
+                                :class="mode==='shopify_to_erp' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='shopify_to_erp'">
+                            <span class="smode-arrow">→</span>
+                            {{ $ecomLabel }} → {{ $erpLabel }}
+                        </button>
+                        <button type="button"
+                                :class="mode==='bidirectional' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='bidirectional'">
+                            <span class="smode-arrow">⇄</span>
+                            Both
+                        </button>
+                    </div>
+
+                    <div class="flow-diagram" x-show="mode==='erp_to_shopify'">
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                    </div>
+                    <div class="flow-diagram" x-show="mode==='shopify_to_erp'">
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                    </div>
+                    <div class="flow-diagram" x-show="mode==='bidirectional'">
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                        <span class="flow-arrow">⇄</span>
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>{{-- /dir-grid --}}
 
     {{-- Sync triggers --}}
     @if(auth()->user()->can('trigger-sync'))

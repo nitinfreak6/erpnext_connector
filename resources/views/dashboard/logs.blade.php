@@ -30,8 +30,8 @@
             <label class="block text-xs text-gray-500 mb-1">Direction</label>
             <select name="direction" class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
                 <option value="">All</option>
-                <option value="odoo_to_shopify" {{ $direction === 'odoo_to_shopify' ? 'selected' : '' }}>Odoo → Shopify/Amazon</option>
-                <option value="shopify_to_odoo" {{ $direction === 'shopify_to_odoo' ? 'selected' : '' }}>Shopify/Amazon → Odoo</option>
+                <option value="odoo_to_shopify" {{ $direction === 'odoo_to_shopify' ? 'selected' : '' }}>{{ $erpDisplayName }} → {{ $ecomDisplayName }}</option>
+                <option value="shopify_to_odoo" {{ $direction === 'shopify_to_odoo' ? 'selected' : '' }}>{{ $ecomDisplayName }}→{{ $erpDisplayName }}</option>
             </select>
         </div>
         <div>
@@ -92,9 +92,9 @@
                 <tr class="hover:bg-gray-50 {{ $log->status === 'failed' ? 'bg-red-50/40' : '' }}">
                     <td class="px-4 py-2.5">
                         @if($log->direction === 'odoo_to_shopify')
-                            <span class="badge bg-blue-100 text-blue-700 text-xs">Odoo → Out</span>
+                            <span class="badge bg-blue-100 text-blue-700 text-xs">{{ $erpDisplayName }} → Out</span>
                         @else
-                            <span class="badge bg-purple-100 text-purple-700 text-xs">In → Odoo</span>
+                            <span class="badge bg-purple-100 text-purple-700 text-xs">In → {{ $erpDisplayName }}</span>
                         @endif
                     </td>
                     <td class="px-4 py-2.5"><span class="badge bg-gray-100 text-gray-600 text-xs">{{ $log->entity_type }}</span></td>

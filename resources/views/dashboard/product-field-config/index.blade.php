@@ -1,6 +1,6 @@
 @extends('dashboard.layout')
-@section('title', 'Product Field Mapping')
-@section('page-title', 'Product Field Mapping')
+@section('title', 'Product Field Config')
+@section('page-title', 'Product Field Config')
 
 @section('content')
 <div x-data="fieldConfigApp()" x-init="init()">

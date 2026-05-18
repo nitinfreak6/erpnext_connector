@@ -28,7 +28,7 @@
             </div>
             <div class="overflow-hidden">
                 <div class="text-white font-semibold text-sm leading-tight truncate">Connector</div>
-                <div class="text-indigo-300 text-xs truncate">Odoo · Shopify · Amazon</div>
+                <div class="text-indigo-300 text-xs truncate">{{ $erpDisplayName }} · {{ $ecomDisplayName }}</div>
             </div>
         </div>
 

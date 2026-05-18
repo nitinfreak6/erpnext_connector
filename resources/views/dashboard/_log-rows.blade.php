@@ -17,9 +17,10 @@
             <tr class="hover:bg-gray-50">
                 <td class="py-2">
                     @if($log->direction === 'odoo_to_shopify')
-                        <span class="badge bg-blue-100 text-blue-700">Odoo → Shop</span>
+                        <span class="badge bg-blue-100 text-blue-700">{{ $erpDisplayName }} → Out</span>
                     @else
-                        <span class="badge bg-purple-100 text-purple-700">Shop → Odoo</span>
+                        <span class="badge bg-purple-100 text-purple-700">In → {{ $erpDisplayName }}</span>
+
                     @endif
                 </td>
                 <td class="py-2"><span class="badge bg-gray-100 text-gray-600">{{ $log->entity_type }}</span></td>

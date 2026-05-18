@@ -24,14 +24,14 @@
         <div>
             <label class="block text-xs text-gray-500 mb-1">Search</label>
             <input type="text" name="search" value="{{ $search }}"
-                   placeholder="Order ID, Shopify name…"
+                   placeholder="Order ID, {{ $ecomDisplayName }} name…"
                    class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm w-64 focus:ring-2 focus:ring-indigo-300 outline-none">
         </div>
         <div>
             <label class="block text-xs text-gray-500 mb-1">Channel</label>
             <select name="channel" class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
                 <option value="all"     {{ $channel === 'all'     ? 'selected' : '' }}>All</option>
-                <option value="shopify" {{ $channel === 'shopify' ? 'selected' : '' }}>Shopify</option>
+                <option value="shopify" {{ $channel === 'shopify' ? 'selected' : '' }}>{{ $ecomDisplayName }}</option>
                 <option value="amazon"  {{ $channel === 'amazon'  ? 'selected' : '' }}>Amazon</option>
             </select>
         </div>
@@ -50,7 +50,7 @@
             <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                 <tr>
                     <th class="px-4 py-3 text-left font-medium">Channel</th>
-                    <th class="px-4 py-3 text-left font-medium">Odoo Order ID</th>
+                    <th class="px-4 py-3 text-left font-medium">{{ $erpDisplayName }} Order ID</th>
                     <th class="px-4 py-3 text-left font-medium">External Order</th>
                     <th class="px-4 py-3 text-left font-medium">Order Name / Ref</th>
                     <th class="px-4 py-3 text-left font-medium">Last Synced</th>
@@ -63,7 +63,7 @@
                         @if(str_starts_with($mapping->entity_type, 'amazon'))
                             <span class="badge bg-amber-100 text-amber-800">Amazon</span>
                         @else
-                            <span class="badge bg-indigo-100 text-indigo-800">Shopify</span>
+                            <span class="badge bg-indigo-100 text-indigo-800">{{ $ecomDisplayName }}</span>
                         @endif
                     </td>
                     <td class="px-4 py-3 font-mono text-xs">

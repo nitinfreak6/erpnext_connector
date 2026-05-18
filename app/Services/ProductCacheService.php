@@ -101,18 +101,33 @@ class ProductCacheService
             'product_attributes' => $productAttributes,
         ];
 
-        // Write to storage/app/products/{odoo_id}.json
+        // Write to storage/app/products/{odoo_id}.json (audit/backup only)
         $filePath = self::BASE_DIR . "/{$odooId}.json";
         Storage::disk(self::DISK)->put($filePath, json_encode($data, JSON_PRETTY_PRINT));
 
-        // Upsert DB record
+        // Extract category name from [id, "All / Saleable"] tuple
+        $categoryName = '';
+        if (!empty($template['categ_id']) && is_array($template['categ_id'])) {
+            $categoryName = $template['categ_id'][1] ?? '';
+        }
+
+        // Upsert DB record — all display columns populated here
         $cache = ProductCache::updateOrCreate(
             ['odoo_id' => $odooId],
             [
-                'name'         => $template['name'],
-                'default_code' => $template['default_code'] ?: null,
-                'file_path'    => $filePath,
-                'fetched_at'   => now(),
+                'name'          => $template['name'],
+                'default_code'  => $template['default_code'] ?: null,
+                'barcode'       => $template['barcode'] ?: null,
+                'product_type'  => $template['type'] ?? null,
+                'is_active'     => (bool) ($template['active'] ?? true),
+                'price'         => $template['list_price'] ?? null,
+                'cost'          => $template['standard_price'] ?? null,
+                'weight'        => $template['weight'] ?? null,
+                'category'      => $categoryName ?: null,
+                'variant_count' => count($variants),
+                'raw_data'      => $data,   // ← entire payload in DB, no file reads needed
+                'file_path'     => $filePath,
+                'fetched_at'    => now(),
             ]
         );
 

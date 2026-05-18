@@ -18,7 +18,7 @@
                     </svg>
                 </div>
                 <h1 class="text-2xl font-bold text-gray-900">Connector Dashboard</h1>
-                <p class="text-sm text-gray-500 mt-1">Odoo · Shopify · Amazon</p>
+                <p class="text-sm text-gray-500 mt-1">{{ $erpDisplayName }} · {{ $ecomDisplayName }}</p>
             </div>
 
             {{-- Flash errors --}}
@@ -50,7 +50,7 @@
                 </button>
             </form>
         </div>
-        <p class="text-center text-slate-400 text-xs mt-6">Odoo–Shopify–Amazon Connector &copy; {{ date('Y') }}</p>
+        <p class="text-center text-slate-400 text-xs mt-6">Odoo–{{ $ecomDisplayName }} &copy; {{ date('Y') }}</p>
     </div>
 </body>
 </html>

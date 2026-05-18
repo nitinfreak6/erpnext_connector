@@ -15,6 +15,7 @@ return new class extends Migration
             $table->string('label', 150);
             $table->text('value')->nullable();   // encrypted for secrets
             $table->text('default_value')->nullable();
+            $table->text('field_type')->nullable();
             $table->boolean('is_secret')->default(false); // mask in UI
             $table->boolean('is_active')->default(true);  // feature toggle
             $table->string('description', 500)->nullable();

@@ -42,14 +42,18 @@ class AppServiceProvider extends ServiceProvider
         // Wrapped in try/catch so asset compilation and fresh installs
         // (before migrations run) don't break.
         View::composer('*', function ($view) {
-            try {
-                $settings = app(SettingsService::class);
-                $view->with('appName',        $settings->appName());
-                $view->with('erpDisplayName', $settings->erpDisplayName());
-            } catch (\Throwable) {
-                $view->with('appName',        config('app.name', 'Connector'));
-                $view->with('erpDisplayName', 'Odoo');
-            }
-        });
+			try {
+				$settings = app(SettingsService::class);
+				$view->with('appName',             $settings->appName());
+				$view->with('erpDisplayName',      $settings->erpDisplayName());
+				$view->with('ecomDisplayName',  $settings->ecomDisplayName()); // ← add
+				$view->with('amazonDisplayName',   $settings->amazonDisplayName());  // ← add
+			} catch (\Throwable) {
+				$view->with('appName',             config('app.name', 'Connector'));
+				$view->with('erpDisplayName',      'Odoo');
+				$view->with('ecomDisplayName',  'Shopify');                        // ← add
+				$view->with('amazonDisplayName',   'Amazon');                         // ← add
+			}
+		});
     }
 }
