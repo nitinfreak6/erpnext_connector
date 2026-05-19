@@ -43,8 +43,11 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
 		Route::get('/',                          [ProductsController::class, 'index'])      ->name('');
 		Route::get('/{odooId}',                  [ProductsController::class, 'show'])       ->name('.show');
 	 
-		// Fetch all from ERP (no push)
+		// Fetch all from ERP (Odoo → Shopify direction)
 		Route::post('/fetch',                    [ProductsController::class, 'fetch'])      ->name('.fetch');
+	 
+		// Pull all from Ecom (Shopify → Odoo direction)
+		Route::post('/pull',                     [ProductsController::class, 'pull'])       ->name('.pull');
 	 
 		// Post all cached products to Shopify/Amazon
 		Route::post('/post-all',                 [ProductsController::class, 'postAll'])    ->name('.post-all');

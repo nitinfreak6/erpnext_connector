@@ -37,6 +37,17 @@ class SyncProducts extends Command
             return self::SUCCESS;
         }
 
+        // ── Check sync direction ─────────────────────────────────────────
+        $mode = $settings->productSyncMode();
+        
+        if ($mode === 'ecom_to_erp' && ! $this->option('force')) {
+            $this->warn("Product sync direction is '{$mode}' (E-commerce → ERP).");
+            $this->line('  Products should be fetched FROM e-commerce, not FROM ERP.');
+            $this->line('  Use <comment>php artisan sync:pull-products-from-ecom</comment> instead.');
+            $this->line('  Or run with <comment>--force</comment> to override.');
+            return self::SUCCESS;
+        }
+
         if ($this->option('dry-run')) {
             $this->info('Dry run — no jobs dispatched.');
             return self::SUCCESS;

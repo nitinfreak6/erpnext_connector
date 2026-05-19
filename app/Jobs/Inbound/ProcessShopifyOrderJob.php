@@ -3,6 +3,7 @@
 namespace App\Jobs\Inbound;
 
 use App\Models\WebhookLog;
+use App\Services\SettingsService;
 use App\Services\Sync\OrderSyncService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -24,11 +25,29 @@ class ProcessShopifyOrderJob implements ShouldQueue
         $this->onQueue('webhooks');
     }
 
-    public function handle(OrderSyncService $orderSync): void
+    public function handle(OrderSyncService $orderSync, SettingsService $settings): void
     {
         $webhookLog = WebhookLog::findOrFail($this->webhookLogId);
 
         if ($webhookLog->processed) {
+            return;
+        }
+
+        // ── Check sync direction ─────────────────────────────────────────
+        $mode = $settings->salesOrderSyncMode();
+        
+        if ($mode === 'erp_to_ecom') {
+            // Orders should flow FROM ERP TO Ecom, not the other way
+            Log::info("Order webhook ignored: sync mode is {$mode} (ERP → Ecom)", [
+                'webhook_id' => $this->webhookLogId,
+                'order_id' => $webhookLog->getDecodedPayload()['id'] ?? 'unknown',
+            ]);
+            
+            $webhookLog->update([
+                'processed' => true,
+                'notes' => "Ignored: sync direction is {$mode} (orders should not come from ecommerce)"
+            ]);
+            
             return;
         }
 

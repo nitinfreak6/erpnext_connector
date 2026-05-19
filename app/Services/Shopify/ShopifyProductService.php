@@ -91,6 +91,216 @@ class ShopifyProductService
 
     public function __construct(private readonly ShopifyGraphQLService $graphql) {}
 
+    // ══════════════════════════════════════════════════════════════════════
+    // LIST / FETCH PRODUCTS
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * List products from Shopify with optional filters
+     * 
+     * @param array $filters ['limit' => 50, 'updated_at_min' => '2024-01-01', 'status' => 'active']
+     * @return array Array of products
+     */
+    public function list(array $filters = []): array
+    {
+        $limit = $filters['limit'] ?? 250;
+        $updatedAtMin = $filters['updated_at_min'] ?? null;
+        $status = $filters['status'] ?? null;
+        
+        // Build query string for filtering
+        $queryParts = [];
+        if ($updatedAtMin) {
+            $queryParts[] = "updated_at:>'{$updatedAtMin}'";
+        }
+        if ($status) {
+            $queryParts[] = "status:{$status}";
+        }
+        $queryString = !empty($queryParts) ? implode(' AND ', $queryParts) : null;
+
+        // Use different query based on whether we have filters
+        if ($queryString) {
+            $query = $this->getProductsQueryWithFilter();
+        } else {
+            $query = $this->getProductsQueryNoFilter();
+        }
+
+        Log::info('Fetching products from Shopify', [
+            'limit' => $limit,
+            'query_string' => $queryString,
+            'filters' => $filters,
+        ]);
+
+        $products = [];
+        $hasNextPage = true;
+        $cursor = null;
+        $fetchedCount = 0;
+
+        while ($hasNextPage && $fetchedCount < $limit) {
+            if ($queryString) {
+                $variables = [
+                    'first' => min(50, $limit - $fetchedCount),
+                    'query' => $queryString,
+                    'after' => $cursor,
+                ];
+            } else {
+                $variables = [
+                    'first' => min(50, $limit - $fetchedCount),
+                    'after' => $cursor,
+                ];
+            }
+
+            $response = $this->graphql->query($query, $variables);
+            
+            Log::debug('Shopify GraphQL response', [
+                'has_products' => isset($response['products']),
+                'edges_count' => count($response['products']['edges'] ?? []),
+            ]);
+            
+            if (!isset($response['products'])) {
+                Log::error('Shopify product list query failed', ['response' => $response]);
+                break;
+            }
+
+            $edges = $response['products']['edges'] ?? [];
+            
+            foreach ($edges as $edge) {
+                $product = $this->normalizeProduct($edge['node']);
+                $products[] = $product;
+                $fetchedCount++;
+                
+                if ($fetchedCount >= $limit) {
+                    break;
+                }
+            }
+
+            $pageInfo = $response['data']['products']['pageInfo'] ?? [];
+            $hasNextPage = $pageInfo['hasNextPage'] ?? false;
+            $cursor = $pageInfo['endCursor'] ?? null;
+        }
+
+        return $products;
+    }
+
+    private function getProductsQueryNoFilter(): string
+    {
+        return <<<'GRAPHQL'
+        query($first: Int!, $after: String) {
+          products(first: $first, after: $after) {
+            edges {
+              node {
+                id
+                title
+                descriptionHtml
+                handle
+                status
+                vendor
+                productType
+                tags
+                createdAt
+                updatedAt
+                variants(first: 100) {
+                  edges {
+                    node {
+                      id
+                      title
+                      sku
+                      barcode
+                      price
+                      compareAtPrice
+                      inventoryQuantity
+                      taxable
+                      inventoryPolicy
+                      inventoryItem {
+                        id
+                      }
+                    }
+                  }
+                }
+                images(first: 10) {
+                  edges {
+                    node {
+                      id
+                      url
+                      altText
+                    }
+                  }
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+        GRAPHQL;
+    }
+
+    private function getProductsQueryWithFilter(): string
+    {
+        return <<<'GRAPHQL'
+        query($first: Int!, $query: String!, $after: String) {
+          products(first: $first, query: $query, after: $after) {
+            edges {
+              node {
+                id
+                title
+                descriptionHtml
+                handle
+                status
+                vendor
+                productType
+                tags
+                createdAt
+                updatedAt
+                variants(first: 100) {
+                  edges {
+                    node {
+                      id
+                      title
+                      sku
+                      barcode
+                      price
+                      compareAtPrice
+                      inventoryQuantity
+                      taxable
+                      inventoryPolicy
+                      inventoryItem {
+                        id
+                      }
+                    }
+                  }
+                }
+                images(first: 10) {
+                  edges {
+                    node {
+                      id
+                      url
+                      altText
+                    }
+                  }
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+        GRAPHQL;
+    }
+
+    /**
+     * Normalize GraphQL product response to simpler array structure
+     * Uses the existing normalizeProduct at the end of the class
+     */
+
+    // ══════════════════════════════════════════════════════════════════════
+    // CREATE / UPDATE
+    // ══════════════════════════════════════════════════════════════════════
+
+
     // ─────────────────────────────────────────────────────────────────────
     // Public API  (same signatures as old REST service — callers unchanged)
     // ─────────────────────────────────────────────────────────────────────

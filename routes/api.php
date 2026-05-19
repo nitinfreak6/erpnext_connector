@@ -17,6 +17,8 @@ Route::prefix('webhooks/shopify')
     ->group(function () {
         Route::post('orders/create',           [WebhookController::class, 'ordersCreate']);
         Route::post('orders/updated',          [WebhookController::class, 'ordersUpdated']);
+        Route::post('products/create',         [WebhookController::class, 'productsCreate']);
+        Route::post('products/update',         [WebhookController::class, 'productsUpdate']);
         Route::post('inventory_levels/update', [WebhookController::class, 'inventoryLevelsUpdate']);
     });
 

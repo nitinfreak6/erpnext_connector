@@ -96,6 +96,14 @@ class SettingsService
             ?? config('sync.erp_driver', env('ERP_DRIVER', 'odoo'));
     }
 
+    // ── E-commerce driver ──────────────────────────────────────────────
+
+    public function ecomDriver(): string
+    {
+        return $this->get('ecom_driver')
+            ?? config('sync.ecom_driver', env('ECOM_DRIVER', 'shopify'));
+    }
+
     // ── Sync master switches ───────────────────────────────────────────
 
     /**
@@ -172,7 +180,7 @@ class SettingsService
 
     // ── Sync direction helpers ─────────────────────────────────────────
     //
-    // Each helper returns a channel slug: 'odoo' | 'shopify' | 'csv'
+    // Each helper returns a channel slug: 'odoo' | 'shopify' | 'woocommerce' | 'csv'
     // The slug 'odoo' means "the configured ERP adapter" — it follows
     // erpDriver(), not literally Odoo.
     //
@@ -184,50 +192,50 @@ class SettingsService
     public function productFetchFrom(): string
     {
         $mode = $this->productSyncMode();
-        return $mode === 'shopify_to_erp' ? 'shopify' : 'odoo';
+        return $mode === 'ecom_to_erp' ? $this->ecomDriver() : 'odoo';
     }
 
-    /** Channel to push products TO. Default: shopify. */
+    /** Channel to push products TO. Default: ecommerce (shopify). */
     public function productPostTo(): string
     {
         $mode = $this->productSyncMode();
-        return $mode === 'shopify_to_erp' ? 'odoo' : 'shopify';
+        return $mode === 'ecom_to_erp' ? 'odoo' : $this->ecomDriver();
     }
 
     /**
      * Product sync mode.
-     * Values: 'erp_to_shopify' | 'shopify_to_erp' | 'bidirectional'
+     * Values: 'erp_to_ecom' | 'ecom_to_erp' | 'bidirectional'
      */
     public function productSyncMode(): string
     {
-        return $this->get('product_sync_mode') ?: 'erp_to_shopify';
+        return $this->get('product_sync_mode') ?: 'erp_to_ecom';
     }
 
     /**
      * Customer sync mode.
-     * Values: 'erp_to_shopify' | 'shopify_to_erp' | 'bidirectional'
+     * Values: 'erp_to_ecom' | 'ecom_to_erp' | 'bidirectional'
      */
     public function customerSyncMode(): string
     {
-        return $this->get('customer_sync_mode') ?: 'erp_to_shopify';
+        return $this->get('customer_sync_mode') ?: 'erp_to_ecom';
     }
 
     /**
      * Sales order sync mode.
-     * Values: 'erp_to_shopify' | 'shopify_to_erp' | 'bidirectional'
+     * Values: 'erp_to_ecom' | 'ecom_to_erp' | 'bidirectional'
      */
     public function salesOrderSyncMode(): string
     {
-        return $this->get('sales_order_sync_mode') ?: 'erp_to_shopify';
+        return $this->get('sales_order_sync_mode') ?: 'erp_to_ecom';
     }
 
     /**
      * Dispatch confirmation sync mode.
-     * Values: 'erp_to_shopify' | 'shopify_to_erp' | 'bidirectional'
+     * Values: 'erp_to_ecom' | 'ecom_to_erp' | 'bidirectional'
      */
     public function dispatchSyncMode(): string
     {
-        return $this->get('dispatch_sync_mode') ?: 'shopify_to_erp';
+        return $this->get('dispatch_sync_mode') ?: 'ecom_to_erp';
     }
 
     /** Channel to pull sales orders FROM. Default: erp (odoo). */
@@ -260,11 +268,16 @@ class SettingsService
      */
     public function channelLabel(string $slug): string
     {
+        $ecomDriver = $this->ecomDriver();
+        
         return match (strtolower($slug)) {
-            'shopify'          => $this->ecomDisplayName(),
+            'shopify'          => 'Shopify',
+            'woocommerce'      => 'WooCommerce',
+            'magento'          => 'Magento',
             'odoo', 'erp', ''  => $this->erpDisplayName(),
             'amazon'           => $this->amazonDisplayName(),
             'csv'              => 'CSV',
+            $ecomDriver        => $this->ecomDisplayName(),
             default            => ucfirst($slug),
         };
     }
@@ -277,7 +290,7 @@ class SettingsService
     {
         $channels = [
             'odoo'    => $this->erpDisplayName(),
-            'shopify' => $this->ecomDisplayName(),
+            $this->ecomDriver() => $this->ecomDisplayName(),
             'csv'     => 'CSV',
         ];
 

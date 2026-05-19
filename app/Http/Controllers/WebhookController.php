@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\Inbound\ProcessShopifyInventoryUpdateJob;
 use App\Jobs\Inbound\ProcessShopifyOrderJob;
 use App\Jobs\Inbound\ProcessShopifyOrderUpdateJob;
+use App\Jobs\Inbound\ProcessShopifyProductJob;
 use App\Models\WebhookLog;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -20,6 +21,16 @@ class WebhookController extends Controller
     public function ordersUpdated(Request $request): Response
     {
         return $this->handleWebhook($request, 'orders/updated', ProcessShopifyOrderUpdateJob::class);
+    }
+
+    public function productsCreate(Request $request): Response
+    {
+        return $this->handleWebhook($request, 'products/create', ProcessShopifyProductJob::class);
+    }
+
+    public function productsUpdate(Request $request): Response
+    {
+        return $this->handleWebhook($request, 'products/update', ProcessShopifyProductJob::class);
     }
 
     public function inventoryLevelsUpdate(Request $request): Response

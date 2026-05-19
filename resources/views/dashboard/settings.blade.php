@@ -301,16 +301,16 @@
                     <div class="sync-mode-group">
                         {{-- Option 1: ERP → Shopify --}}
                         <button type="button"
-                                :class="mode==='erp_to_shopify' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='erp_to_shopify'">
+                                :class="mode==='erp_to_ecom' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='erp_to_ecom'">
                             <span class="smode-arrow">→</span>
                             {{ $erpLabel }} → {{ $ecomLabel }}
                         </button>
 
                         {{-- Option 2: Shopify → ERP --}}
                         <button type="button"
-                                :class="mode==='shopify_to_erp' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='shopify_to_erp'">
+                                :class="mode==='ecom_to_erp' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='ecom_to_erp'">
                             <span class="smode-arrow">→</span>
                             {{ $ecomLabel }} → {{ $erpLabel }}
                         </button>
@@ -325,12 +325,12 @@
                     </div>
 
                     {{-- Live flow diagram --}}
-                    <div class="flow-diagram" x-show="mode==='erp_to_shopify'">
+                    <div class="flow-diagram" x-show="mode==='erp_to_ecom'">
                         <span class="flow-node">{{ $erpLabel }}</span>
                         <span class="flow-arrow">→</span>
                         <span class="flow-node">{{ $ecomLabel }}</span>
                     </div>
-                    <div class="flow-diagram" x-show="mode==='shopify_to_erp'">
+                    <div class="flow-diagram" x-show="mode==='ecom_to_erp'">
                         <span class="flow-node">{{ $ecomLabel }}</span>
                         <span class="flow-arrow">→</span>
                         <span class="flow-node">{{ $erpLabel }}</span>
@@ -391,14 +391,14 @@
 
                     <div class="sync-mode-group">
                         <button type="button"
-                                :class="mode==='erp_to_shopify' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='erp_to_shopify'">
+                                :class="mode==='erp_to_ecom' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='erp_to_ecom'">
                             <span class="smode-arrow">→</span>
                             {{ $erpLabel }} → {{ $ecomLabel }}
                         </button>
                         <button type="button"
-                                :class="mode==='shopify_to_erp' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='shopify_to_erp'">
+                                :class="mode==='ecom_to_erp' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='ecom_to_erp'">
                             <span class="smode-arrow">→</span>
                             {{ $ecomLabel }} → {{ $erpLabel }}
                         </button>
@@ -410,12 +410,12 @@
                         </button>
                     </div>
 
-                    <div class="flow-diagram" x-show="mode==='erp_to_shopify'">
+                    <div class="flow-diagram" x-show="mode==='erp_to_ecom'">
                         <span class="flow-node">{{ $erpLabel }}</span>
                         <span class="flow-arrow">→</span>
                         <span class="flow-node">{{ $ecomLabel }}</span>
                     </div>
-                    <div class="flow-diagram" x-show="mode==='shopify_to_erp'">
+                    <div class="flow-diagram" x-show="mode==='ecom_to_erp'">
                         <span class="flow-node">{{ $ecomLabel }}</span>
                         <span class="flow-arrow">→</span>
                         <span class="flow-node">{{ $erpLabel }}</span>
@@ -465,14 +465,14 @@
 
                     <div class="sync-mode-group">
                         <button type="button"
-                                :class="mode==='erp_to_shopify' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='erp_to_shopify'">
+                                :class="mode==='erp_to_ecom' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='erp_to_ecom'">
                             <span class="smode-arrow">→</span>
                             {{ $erpLabel }} → {{ $ecomLabel }}
                         </button>
                         <button type="button"
-                                :class="mode==='shopify_to_erp' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='shopify_to_erp'">
+                                :class="mode==='ecom_to_erp' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='ecom_to_erp'">
                             <span class="smode-arrow">→</span>
                             {{ $ecomLabel }} → {{ $erpLabel }}
                         </button>
@@ -484,12 +484,12 @@
                         </button>
                     </div>
 
-                    <div class="flow-diagram" x-show="mode==='erp_to_shopify'">
+                    <div class="flow-diagram" x-show="mode==='erp_to_ecom'">
                         <span class="flow-node">{{ $erpLabel }}</span>
                         <span class="flow-arrow">→</span>
                         <span class="flow-node">{{ $ecomLabel }}</span>
                     </div>
-                    <div class="flow-diagram" x-show="mode==='shopify_to_erp'">
+                    <div class="flow-diagram" x-show="mode==='ecom_to_erp'">
                         <span class="flow-node">{{ $ecomLabel }}</span>
                         <span class="flow-arrow">→</span>
                         <span class="flow-node">{{ $erpLabel }}</span>
@@ -523,14 +523,14 @@
 
                     <div class="sync-mode-group">
                         <button type="button"
-                                :class="mode==='erp_to_shopify' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='erp_to_shopify'">
+                                :class="mode==='erp_to_ecom' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='erp_to_ecom'">
                             <span class="smode-arrow">→</span>
                             {{ $erpLabel }} → {{ $ecomLabel }}
                         </button>
                         <button type="button"
-                                :class="mode==='shopify_to_erp' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='shopify_to_erp'">
+                                :class="mode==='ecom_to_erp' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='ecom_to_erp'">
                             <span class="smode-arrow">→</span>
                             {{ $ecomLabel }} → {{ $erpLabel }}
                         </button>
@@ -542,12 +542,12 @@
                         </button>
                     </div>
 
-                    <div class="flow-diagram" x-show="mode==='erp_to_shopify'">
+                    <div class="flow-diagram" x-show="mode==='erp_to_ecom'">
                         <span class="flow-node">{{ $erpLabel }}</span>
                         <span class="flow-arrow">→</span>
                         <span class="flow-node">{{ $ecomLabel }}</span>
                     </div>
-                    <div class="flow-diagram" x-show="mode==='shopify_to_erp'">
+                    <div class="flow-diagram" x-show="mode==='ecom_to_erp'">
                         <span class="flow-node">{{ $ecomLabel }}</span>
                         <span class="flow-arrow">→</span>
                         <span class="flow-node">{{ $erpLabel }}</span>

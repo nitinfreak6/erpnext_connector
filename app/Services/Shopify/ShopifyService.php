@@ -157,4 +157,65 @@ class ShopifyService
 
         return null;
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // WEBHOOK MANAGEMENT
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * List all registered webhooks
+     */
+    public function listWebhooks(): array
+    {
+        $response = $this->get('webhooks.json');
+        return $response['webhooks'] ?? [];
+    }
+
+    /**
+     * Create a webhook
+     * 
+     * @param string $topic E.g., 'orders/create', 'products/update'
+     * @param string $address Full URL where webhook should POST
+     */
+    public function createWebhook(string $topic, string $address): array
+    {
+        $response = $this->post('webhooks.json', [
+            'webhook' => [
+                'topic' => $topic,
+                'address' => $address,
+                'format' => 'json',
+            ]
+        ]);
+        
+        return $response['webhook'] ?? [];
+    }
+
+    /**
+     * Delete a webhook by ID
+     */
+    public function deleteWebhook(int|string $webhookId): void
+    {
+        $this->delete("webhooks/{$webhookId}.json");
+    }
+
+    /**
+     * Verify webhook HMAC signature
+     * 
+     * @param string $data Raw request body
+     * @param string $hmacHeader Value of X-Shopify-Hmac-Sha256 header
+     */
+    public function verifyWebhook(string $data, string $hmacHeader): bool
+    {
+        $settings = app(\App\Services\SettingsService::class);
+        $secret = $settings->shopifyWebhookSecret() ?: config('shopify.webhook_secret');
+        
+        if (!$secret) {
+            Log::warning('Shopify webhook secret not configured');
+            return false;
+        }
+
+        $calculated = base64_encode(hash_hmac('sha256', $data, $secret, true));
+        
+        return hash_equals($calculated, $hmacHeader);
+    }
 }

@@ -25,19 +25,19 @@ class ProductSyncService
     // ── Direction helpers ────────────────────────────────────────────────
 
     /**
-     * Returns true when the configured mode is ERP → Shopify (default one-way).
+     * Returns true when the configured mode is ERP → Ecom (default one-way).
      */
-    public function isErpToShopify(): bool
+    public function isErpToEcom(): bool
     {
-        return $this->settings->productSyncMode() === 'erp_to_shopify';
+        return $this->settings->productSyncMode() === 'erp_to_ecom';
     }
 
     /**
-     * Returns true when the configured mode is Shopify → ERP (reversed one-way).
+     * Returns true when the configured mode is Ecom → ERP (reversed one-way).
      */
-    public function isShopifyToErp(): bool
+    public function isEcomToErp(): bool
     {
-        return $this->settings->productSyncMode() === 'shopify_to_erp';
+        return $this->settings->productSyncMode() === 'ecom_to_erp';
     }
 
     /**
@@ -51,7 +51,7 @@ class ProductSyncService
     // ── ERP → Shopify (default direction) ───────────────────────────────
 
     /**
-     * Sync a single ERP product template to Shopify.
+     * Sync a single ERP product template to E-commerce platform.
      *
      * Pass $cachedVariants and $cachedAttributeValues from the JSON cache
      * to avoid calling the ERP again. If not provided, falls back to ERP API.
@@ -62,10 +62,10 @@ class ProductSyncService
         ?array $cachedAttributeValues = null,
     ): string {
         // Route to the correct direction
-        if ($this->isShopifyToErp()) {
+        if ($this->isEcomToErp()) {
             throw new \LogicException(
-                'syncProduct() is for ERP → Shopify direction. ' .
-                'Use syncShopifyProductToErp() when product_sync_mode = shopify_to_erp.'
+                'syncProduct() is for ERP → Ecom direction. ' .
+                'Use syncEcomProductToErp() when product_sync_mode = ecom_to_erp.'
             );
         }
 
@@ -158,35 +158,35 @@ class ProductSyncService
         }
     }
 
-    // ── Shopify → ERP (reversed direction) ──────────────────────────────
+    // ── Ecom → ERP (reversed direction) ──────────────────────────────────
 
     /**
-     * Sync a Shopify product into the ERP.
+     * Sync an e-commerce product into the ERP.
      *
-     * Called when product_fetch_from = 'shopify' and product_post_to = 'odoo'.
+     * Called when product_fetch_from = 'ecom' and product_post_to = 'erp'.
      *
-     * @param  array $shopifyProduct  Raw Shopify product payload (REST or GraphQL normalised)
-     * @return int|string             The ERP product ID that was created or updated
+     * @param  array $ecomProduct  Raw ecom product payload (REST or GraphQL normalised)
+     * @return int|string          The ERP product ID that was created or updated
      */
-    public function syncShopifyProductToErp(array $shopifyProduct): int|string
+    public function syncEcomProductToErp(array $ecomProduct): int|string
     {
-        $shopifyId = (string) ($shopifyProduct['id'] ?? $shopifyProduct['shopify_id'] ?? '');
+        $ecomId = (string) ($ecomProduct['id'] ?? $ecomProduct['ecom_id'] ?? '');
 
-        if (! $shopifyId) {
-            throw new \InvalidArgumentException('syncShopifyProductToErp: missing Shopify product ID.');
+        if (! $ecomId) {
+            throw new \InvalidArgumentException('syncEcomProductToErp: missing ecommerce product ID.');
         }
 
-        // ── Check for an existing mapping (shopify_id → erp_id) ──────────
-        $mapping = $this->mappings->findByShopifyId(SyncMapping::TYPE_PRODUCT, $shopifyId);
+        // ── Check for an existing mapping (ecom_id → erp_id) ──────────
+        $mapping = $this->mappings->findByEcomId(SyncMapping::TYPE_PRODUCT, $ecomId);
 
-        // Normalise the Shopify payload into the flat ERP-agnostic structure
+        // Normalise the ecom payload into the flat ERP-agnostic structure
         // the ErpInterface expects.  The adapter must implement upsertProduct().
-        $erpPayload = $this->normaliseShopifyToErp($shopifyProduct);
+        $erpPayload = $this->normaliseEcomToErp($ecomProduct);
 
         $log = SyncLog::create([
-            'direction'       => 'shopify_to_erp',     // extend SyncLog constants as needed
+            'direction'       => 'ecom_to_erp',
             'entity_type'     => SyncMapping::TYPE_PRODUCT,
-            'entity_id'       => $shopifyId,
+            'entity_id'       => $ecomId,
             'action'          => $mapping ? 'update' : 'create',
             'status'          => SyncLog::STATUS_PROCESSING,
             'request_payload' => json_encode($erpPayload),
@@ -195,7 +195,7 @@ class ProductSyncService
         try {
             if ($mapping) {
                 $erpId = $this->erp->upsertProduct(
-                    array_merge($erpPayload, ['id' => $mapping->odoo_id])
+                    array_merge($erpPayload, ['id' => $mapping->erp_id])
                 );
                 $action = 'update';
             } else {
@@ -206,13 +206,16 @@ class ProductSyncService
             $this->mappings->upsert(
                 SyncMapping::TYPE_PRODUCT,
                 (string) $erpId,
-                $shopifyId,
-                ['last_synced_at' => now()]
+                $ecomId,
+                [
+                    'last_synced_at' => now(),
+                    'last_sync_direction' => 'ecom_to_erp',
+                ]
             );
 
             $log->markSuccess(json_encode(['erp_id' => $erpId]));
             Log::info(
-                "Product synced: Shopify #{$shopifyId} → ERP #{$erpId} [{$this->erp->driverName()}]",
+                "Product synced: Ecom #{$ecomId} → ERP #{$erpId} [{$this->erp->driverName()}]",
                 ['action' => $action]
             );
 
@@ -226,11 +229,11 @@ class ProductSyncService
     /**
      * Dispatch the correct sync based on the current direction setting.
      *
-     * For 'erp_to_shopify':   expects an ERP template array.
-     * For 'shopify_to_erp':   expects a Shopify product array (must include 'id').
-     * For 'bidirectional':    call each direction separately with the matching payload.
-     *                         This method runs ERP → Shopify by default; pass
-     *                         $reverseForBidi = true to run Shopify → ERP leg.
+     * For 'erp_to_ecom':   expects an ERP template array.
+     * For 'ecom_to_erp':   expects an ecom product array (must include 'id').
+     * For 'bidirectional': call each direction separately with the matching payload.
+     *                      This method runs ERP → Ecom by default; pass
+     *                      $reverseForBidi = true to run Ecom → ERP leg.
      */
     public function syncAuto(
         array $product,
@@ -240,8 +243,8 @@ class ProductSyncService
     ): string|int {
         $mode = $this->settings->productSyncMode();
 
-        if ($mode === 'shopify_to_erp' || ($mode === 'bidirectional' && $reverseForBidi)) {
-            return $this->syncShopifyProductToErp($product);
+        if ($mode === 'ecom_to_erp' || ($mode === 'bidirectional' && $reverseForBidi)) {
+            return $this->syncEcomProductToErp($product);
         }
 
         return $this->syncProduct($product, $cachedVariants, $cachedAttributeValues);
@@ -250,25 +253,25 @@ class ProductSyncService
     // ── Private helpers ──────────────────────────────────────────────────
 
     /**
-     * Convert a Shopify product payload to the flat normalised structure
+     * Convert an e-commerce product payload to the flat normalised structure
      * the ERP adapter's upsertProduct() method expects.
      *
      * Extend this as your ErpInterface#upsertProduct() signature evolves.
      */
-    private function normaliseShopifyToErp(array $shopifyProduct): array
+    private function normaliseEcomToErp(array $ecomProduct): array
     {
-        $variants = $shopifyProduct['variants'] ?? [];
+        $variants = $ecomProduct['variants'] ?? [];
 
         return [
-            'name'           => $shopifyProduct['title']        ?? '',
-            'default_code'   => $variants[0]['sku']             ?? '',
-            'barcode'        => $variants[0]['barcode']          ?? '',
+            'name'           => $ecomProduct['title']        ?? '',
+            'default_code'   => $variants[0]['sku']          ?? '',
+            'barcode'        => $variants[0]['barcode']      ?? '',
             'list_price'     => (float) ($variants[0]['price']  ?? 0),
-            'description'    => strip_tags($shopifyProduct['body_html'] ?? ''),
-            'type'           => 'product',
-            'active'         => ($shopifyProduct['status'] ?? 'active') === 'active',
-            '_source'        => 'shopify',
-            '_shopify_id'    => (string) ($shopifyProduct['id'] ?? ''),
+            'description'    => strip_tags($ecomProduct['body_html'] ?? ''),
+            'type'           => 'consu',  // Consumable - safe default for Odoo
+            'active'         => ($ecomProduct['status'] ?? 'active') === 'active',
+            '_source'        => $this->settings->ecomDriver(),
+            '_ecom_id'       => (string) ($ecomProduct['id'] ?? ''),
             '_variants_raw'  => $variants,
         ];
     }

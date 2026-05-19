@@ -23,6 +23,18 @@ class SyncPushProductsCommand extends Command
         $onlyNew = $this->option('only-new');
         $dryRun  = $this->option('dry-run');
 
+        // ── Check sync direction ─────────────────────────────────────────
+        $settings = app(\App\Services\SettingsService::class);
+        $mode = $settings->productSyncMode();
+        
+        if ($mode === 'ecom_to_erp') {
+            $this->warn("Product sync direction is '{$mode}' (E-commerce → ERP).");
+            $this->line('  Products should be pushed TO ERP, not TO e-commerce.');
+            $this->line('  Products from e-commerce are synced automatically via webhooks.');
+            $this->line('  Or manually via: <comment>php artisan sync:pull-products-from-ecom</comment>');
+            return self::SUCCESS;
+        }
+
         // ── Read from product_cache, NOT sync_mappings ────────────────────
         //
         // sync_mappings only contains products already pushed to Shopify.

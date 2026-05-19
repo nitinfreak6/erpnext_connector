@@ -64,6 +64,40 @@ class OdooErpAdapter implements ErpInterface
         return $this->products->getCategory($categoryId);
     }
 
+    /**
+     * Create or update a product in Odoo
+     * 
+     * @param array $productData Product data with optional 'id' for update
+     * @return int|string The Odoo product ID
+     */
+    public function upsertProduct(array $productData): int|string
+    {
+        // Strip internal tracking fields that don't exist in Odoo
+        $internalFields = ['_source', '_ecom_id', '_variants_raw', '_shopify_product_type'];
+        foreach ($internalFields as $field) {
+            unset($productData[$field]);
+        }
+        
+        // Get the underlying OdooService from OdooProductService
+        $odooService = app(\App\Services\Odoo\OdooService::class);
+        
+        // If ID is provided, update existing product
+        if (!empty($productData['id'])) {
+            $productId = (int) $productData['id'];
+            unset($productData['id']); // Remove ID from data payload
+            
+            // Use Odoo's write method to update product.template
+            $odooService->write('product.template', [$productId], $productData);
+            
+            return $productId;
+        }
+        
+        // Otherwise create new product using product.template
+        $productId = $odooService->create('product.template', $productData);
+        
+        return $productId;
+    }
+
     // ── Inventory ────────────────────────────────────────────────────────
 
     public function getInventoryModifiedSince(string $writeDate, ?int $locationId = null): array

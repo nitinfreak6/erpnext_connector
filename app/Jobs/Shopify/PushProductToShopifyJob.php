@@ -3,6 +3,7 @@
 namespace App\Jobs\Shopify;
 
 use App\Services\ProductCacheService;
+use App\Services\SettingsService;
 use App\Services\Sync\ProductSyncService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -30,8 +31,20 @@ class PushProductToShopifyJob implements ShouldQueue, ShouldBeUnique
         return 'shopify_product_' . $this->odooId;
     }
 
-    public function handle(ProductSyncService $syncService, ProductCacheService $cache): void
-    {
+    public function handle(
+        ProductSyncService $syncService,
+        ProductCacheService $cache,
+        SettingsService $settings
+    ): void {
+        // ── Check sync direction ─────────────────────────────────────────
+        $mode = $settings->productSyncMode();
+        
+        if ($mode === 'ecom_to_erp') {
+            Log::info("PushProductToShopifyJob: skipped #{$this->odooId} — sync mode is {$mode} (should not push to ecommerce)");
+            $cache->markShopifyFailed($this->odooId, "Skipped: sync direction is {$mode}");
+            return;
+        }
+
         // ── Read everything from JSON cache — zero Odoo API calls ────────
         $data = $cache->readOrFail($this->odooId);
 

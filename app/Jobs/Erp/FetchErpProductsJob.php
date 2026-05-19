@@ -39,6 +39,14 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
             return;
         }
 
+        // ── Direction check ─────────────────────────────────────────────
+        $mode = $settings->productSyncMode();
+        
+        if ($mode === 'ecom_to_erp') {
+            Log::info("FetchErpProductsJob: skipped — sync mode is {$mode} (products should come from ecommerce, not ERP)");
+            return;
+        }
+
         $state = SyncQueueState::forType('products');
 
         if ($state->is_running && !$this->erpIds) {
