@@ -16,6 +16,8 @@ class OrderSyncService
         private readonly ErpInterface          $erp,             // ← was OdooOrderService + OdooCustomerService
         private readonly MappingService        $mappings,
         private readonly ChannelMappingService $channelMappings,
+		private readonly SettingsService $settings,  // ← Add this
+
     ) {}
 
     /**
@@ -26,12 +28,12 @@ class OrderSyncService
         $shopifyOrderId = (string) $shopifyOrder['id'];
 
         if ($this->mappings->findByShopifyId(SyncMapping::TYPE_ORDER, $shopifyOrderId)) {
-            Log::info("Shopify order #{$shopifyOrderId} already in ERP, skipping.");
+			Log::info(ucfirst($this->settings->ecomDriver()) . " order #{$ecomOrderId} already in ERP, skipping.");
             return 0;
         }
 
         $log = SyncLog::create([
-            'direction'       => SyncLog::DIRECTION_SHOPIFY_TO_ODOO,
+            'direction'       => 'ecom_to_erp',
             'entity_type'     => SyncMapping::TYPE_ORDER,
             'entity_id'       => $shopifyOrderId,
             'action'          => 'create',
@@ -49,7 +51,7 @@ class OrderSyncService
 
             $orderData = [
                 'client_order_ref'    => $shopifyOrder['name'],
-                'origin'              => 'Shopify #' . $shopifyOrder['name'],
+                'origin'              => ucfirst($this->settings->ecomDriver()) . ' #' . $shopifyOrder['name'],
                 'partner_id'          => $partnerId,
                 'partner_invoice_id'  => $partnerId,
                 'partner_shipping_id' => $partnerId,
@@ -111,7 +113,7 @@ class OrderSyncService
      * Kept for backwards compatibility with existing job calls.
      * @deprecated Use createInErp() for new code.
      */
-    public function createInOdoo(array $shopifyOrder): int
+	public function createOrder(array $ecomOrder): int
     {
         return $this->createInErp($shopifyOrder);
     }
@@ -141,8 +143,8 @@ class OrderSyncService
         $name = trim(($billing['first_name'] ?? '') . ' ' . ($billing['last_name'] ?? ''));
 
         $partnerData = [
-            'name'          => $name ?: ($email ?: 'Shopify Customer'),
-            'email'         => $email,
+            'name' => $name ?: ($email ?: ucfirst($this->settings->ecomDriver()) . ' Customer'),
+			'email'         => $email,
             'phone'         => $billing['phone'] ?? '',
             'street'        => $billing['address1'] ?? '',
             'street2'       => $billing['address2'] ?? '',

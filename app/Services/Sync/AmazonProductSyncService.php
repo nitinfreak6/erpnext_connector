@@ -66,7 +66,7 @@ class AmazonProductSyncService
             $existingMapping = $this->mappings->findByOdooId(self::ENTITY_VARIANT, (string) $variant['id']);
 
             $log = SyncLog::create([
-                'direction'   => SyncLog::DIRECTION_ODOO_TO_SHOPIFY,
+                'direction'   => 'erp_to_ecom',
                 'entity_type' => self::ENTITY_VARIANT,
                 'entity_id'   => (string) $variant['id'],
                 'action'      => $existingMapping ? 'update' : 'create',

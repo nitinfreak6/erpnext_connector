@@ -20,6 +20,7 @@ class ProductFieldConfig extends Model
         'scope',
         'default_value',
         'transform',
+        'reverse_transform',
         'min_length',
         'max_length',
         'is_active',
@@ -45,6 +46,20 @@ class ProductFieldConfig extends Model
             'boolean_status'       => 'Boolean → active/draft',
             'array_second'         => 'Array Second Value (e.g. [id, name] → name)',
             'base64_image'         => 'Base64 Image → Shopify images array',
+        ];
+    }
+
+    // Available REVERSE transform options (Shopify → Odoo)
+    public static function reverseTransformOptions(): array
+    {
+        return [
+            ''                      => 'None',
+            'strip_tags'            => 'Strip HTML Tags',
+            'parse_float'           => 'Parse as Float',
+            'parse_float_nullable'  => 'Parse as Float (nullable)',
+            'status_to_boolean'     => 'Status String → Boolean',
+            'pass_through'          => 'Pass Through (no transform)',
+            'skip'                  => 'Skip (don\'t sync this field)',
         ];
     }
 

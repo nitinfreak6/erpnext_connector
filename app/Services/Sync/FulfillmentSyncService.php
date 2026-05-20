@@ -107,7 +107,7 @@ class FulfillmentSyncService
         }
 
         $log = SyncLog::create([
-            'direction'   => SyncLog::DIRECTION_ODOO_TO_SHOPIFY,
+            'direction'   => 'erp_to_ecom',
             'entity_type' => SyncMapping::TYPE_ORDER,
             'entity_id'   => $erpOrderId,
             'action'      => 'cancel',

@@ -41,7 +41,7 @@ class OdooCustomerService
             'res.partner',
             [
                 ['write_date', '>', $writeDate],
-                ['customer_rank', '>', 0],
+                //['customer_rank', '>', 0],
                 ['active', '=', true],
             ],
             self::PARTNER_FIELDS,

@@ -37,7 +37,7 @@ class OrdersController extends Controller
 
         // Stats
         $stats = [
-            'shopify_total' => SyncMapping::where('entity_type', 'order')->count(),
+            'ecom_total' => SyncMapping::where('entity_type', 'order')->count(),
             'amazon_total'  => SyncMapping::where('entity_type', 'amazon_order')->count(),
             'today'         => SyncMapping::whereIn('entity_type', ['order', 'amazon_order'])
                                 ->whereDate('last_synced_at', today())->count(),
@@ -45,11 +45,13 @@ class OrdersController extends Controller
 
         // Recent order sync logs
         $recentLogs = SyncLog::whereIn('entity_type', ['order', 'amazon_order'])
-            ->where('direction', 'shopify_to_odoo')
+            ->whereIn('direction', ['ecom_to_erp', 'shopify_to_odoo'])  // Support both generic and legacy
             ->orderByDesc('created_at')
             ->limit(10)
             ->get();
 
-        return view('dashboard.orders', compact('orders', 'search', 'channel', 'stats', 'recentLogs'));
+        $ecomDriver = app(\App\Services\SettingsService::class)->ecomDriver();
+
+        return view('dashboard.orders', compact('orders', 'search', 'channel', 'stats', 'recentLogs', 'ecomDriver'));
     }
 }

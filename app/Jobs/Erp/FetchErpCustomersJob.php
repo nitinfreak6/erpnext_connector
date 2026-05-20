@@ -2,7 +2,7 @@
 
 namespace App\Jobs\Erp;
 
-use App\Jobs\Shopify\PushCustomerToShopifyJob;
+use App\Jobs\Ecom\PushCustomerToEcomJob;
 use App\Models\SyncQueueState;
 use App\Services\Erp\ErpInterface;
 use Illuminate\Bus\Queueable;
@@ -48,7 +48,7 @@ class FetchErpCustomersJob implements ShouldQueue, ShouldBeUnique
             $latestWriteDate = $writeDate;
 
             foreach ($customers as $customer) {
-                PushCustomerToShopifyJob::dispatch($customer);
+                PushCustomerToEcomJob::dispatch($customer);
 
                 if (($customer['write_date'] ?? '') > $latestWriteDate) {
                     $latestWriteDate = $customer['write_date'];

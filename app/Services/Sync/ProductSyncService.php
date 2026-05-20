@@ -3,6 +3,7 @@
 namespace App\Services\Sync;
 
 use App\Exceptions\ShopifyApiException;
+use App\Models\ProductFieldConfig;
 use App\Models\SyncLog;
 use App\Models\SyncMapping;
 use App\Services\ChannelMappingService;
@@ -10,6 +11,7 @@ use App\Services\Erp\ErpInterface;
 use App\Services\MappingService;
 use App\Services\SettingsService;
 use App\Services\Shopify\ShopifyProductService;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class ProductSyncService
@@ -109,7 +111,7 @@ class ProductSyncService
         $mapping = $this->mappings->findByOdooId(SyncMapping::TYPE_PRODUCT, $erpId);
 
         $log = SyncLog::create([
-            'direction'       => SyncLog::DIRECTION_ODOO_TO_SHOPIFY,
+            'direction' => SyncLog::DIRECTION_ERP_TO_ECOM,
             'entity_type'     => SyncMapping::TYPE_PRODUCT,
             'entity_id'       => $erpId,
             'action'          => $mapping ? 'update' : 'create',
@@ -255,25 +257,99 @@ class ProductSyncService
     /**
      * Convert an e-commerce product payload to the flat normalised structure
      * the ERP adapter's upsertProduct() method expects.
-     *
-     * Extend this as your ErpInterface#upsertProduct() signature evolves.
+     * 
+     * Now uses ProductFieldConfig instead of hardcoded mappings!
      */
     private function normaliseEcomToErp(array $ecomProduct): array
     {
+        $configs = $this->getReverseFieldConfigs();
         $variants = $ecomProduct['variants'] ?? [];
-
-        return [
-            'name'           => $ecomProduct['title']        ?? '',
-            'default_code'   => $variants[0]['sku']          ?? '',
-            'barcode'        => $variants[0]['barcode']      ?? '',
-            'list_price'     => (float) ($variants[0]['price']  ?? 0),
-            'description'    => strip_tags($ecomProduct['body_html'] ?? ''),
-            'type'           => 'consu',  // Consumable - safe default for Odoo
-            'active'         => ($ecomProduct['status'] ?? 'active') === 'active',
+        $firstVariant = $variants[0] ?? [];
+        
+        $erpPayload = [
+            'type'           => 'consu',  // Safe default for Odoo
             '_source'        => $this->settings->ecomDriver(),
             '_ecom_id'       => (string) ($ecomProduct['id'] ?? ''),
             '_variants_raw'  => $variants,
         ];
+
+        // Map template-level fields
+        foreach ($configs['template'] as $config) {
+            if (!$config['is_active'] || $config['reverse_transform'] === 'skip') {
+                continue;
+            }
+
+            $shopifyField = $config['shopify_field'];
+            $odooField = $config['odoo_field'];
+            $rawValue = $ecomProduct[$shopifyField] ?? null;
+
+            if ($rawValue !== null) {
+                $erpPayload[$odooField] = $this->applyReverseTransform(
+                    $rawValue, 
+                    $config['reverse_transform'] ?? null,
+                    $config
+                );
+            }
+        }
+
+        // Map variant-level fields (use first variant)
+        foreach ($configs['variant'] as $config) {
+            if (!$config['is_active'] || $config['reverse_transform'] === 'skip') {
+                continue;
+            }
+
+            $shopifyField = $config['shopify_field'];
+            $odooField = $config['odoo_field'];
+            $rawValue = $firstVariant[$shopifyField] ?? null;
+
+            if ($rawValue !== null) {
+                $erpPayload[$odooField] = $this->applyReverseTransform(
+                    $rawValue, 
+                    $config['reverse_transform'] ?? null,
+                    $config
+                );
+            }
+        }
+
+        return $erpPayload;
+    }
+
+    /**
+     * Get field configs grouped by scope, cached for performance
+     */
+    private function getReverseFieldConfigs(): array
+    {
+        return Cache::remember('product_field_configs_reverse_shopify', 60, function () {
+            $allConfigs = ProductFieldConfig::where('channel', 'shopify')
+                ->where('is_active', true)
+                ->orderBy('sort_order')
+                ->get();
+
+            return [
+                'template' => $allConfigs->where('scope', 'template')->toArray(),
+                'variant' => $allConfigs->where('scope', 'variant')->toArray(),
+            ];
+        });
+    }
+
+    /**
+     * Apply reverse transform (Shopify → Odoo)
+     */
+    private function applyReverseTransform(mixed $value, ?string $transform, array $config): mixed
+    {
+        if (!$transform) {
+            return $value;
+        }
+
+        return match($transform) {
+            'strip_tags' => strip_tags((string) $value),
+            'parse_float' => (float) $value,
+            'parse_float_nullable' => $value ? (float) $value : null,
+            'status_to_boolean' => in_array(strtolower($value), ['active', 'true', '1']),
+            'pass_through' => $value,
+            'skip' => null,
+            default => $value,
+        };
     }
 
     private function resolveProductType(array $erpTemplate): ?string

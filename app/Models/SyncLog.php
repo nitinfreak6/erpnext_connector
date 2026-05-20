@@ -26,8 +26,14 @@ class SyncLog extends Model
         'synced_at'     => 'datetime',
     ];
 
-    const DIRECTION_ODOO_TO_SHOPIFY  = 'odoo_to_shopify';
-    const DIRECTION_SHOPIFY_TO_ODOO  = 'shopify_to_odoo';
+    // ── Generic Direction Constants (Driver-Agnostic) ──────────────────
+    const DIRECTION_ERP_TO_ECOM = 'erp_to_ecom';
+    const DIRECTION_ECOM_TO_ERP = 'ecom_to_erp';
+
+    // ── Legacy Constants (Backward Compatibility) ───────────────────────
+    // These map to generic directions for gradual migration
+    const DIRECTION_ODOO_TO_SHOPIFY  = 'erp_to_ecom';  // ← Now returns generic
+    const DIRECTION_SHOPIFY_TO_ODOO  = 'ecom_to_erp';  // ← Now returns generic
 
     const STATUS_PENDING    = 'pending';
     const STATUS_PROCESSING = 'processing';

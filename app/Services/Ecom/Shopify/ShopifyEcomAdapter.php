@@ -139,7 +139,8 @@ class ShopifyEcomAdapter implements EcomInterface
 
     public function getCustomers(array $filters = []): array
     {
-        return $this->customers->list($filters);
+        $result = $this->customers->list($filters);
+        return $result['customers'] ?? [];
     }
 
     public function createCustomer(array $customerData): array

@@ -37,7 +37,7 @@ class AmazonOrderSyncService
         }
 
         $log = SyncLog::create([
-            'direction'       => SyncLog::DIRECTION_SHOPIFY_TO_ODOO,
+            'direction'       => 'ecom_to_erp',
             'entity_type'     => self::ENTITY_ORDER,
             'entity_id'       => $amazonOrderId,
             'action'          => 'create',

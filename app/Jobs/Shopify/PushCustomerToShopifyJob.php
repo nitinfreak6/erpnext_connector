@@ -15,7 +15,7 @@ class PushCustomerToShopifyJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries = 3;
+    public int $tries = 10;
     public array $backoff = [60, 300, 900];
 
     public function __construct(private readonly array $odooPartner)

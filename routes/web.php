@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Dashboard\MappingController;
 use App\Http\Controllers\Dashboard\ProductCacheController;
 use App\Http\Controllers\Dashboard\ProductFieldConfigController;
+use App\Http\Controllers\Dashboard\CustomersController;
 
 /*
 |--------------------------------------------------------------------------
@@ -124,5 +125,11 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
 		Route::delete('/{type}/{mapping}',       [MappingController::class, 'destroy'])->name('.destroy');
 		Route::patch('/{type}/{mapping}/toggle', [MappingController::class, 'toggle']) ->name('.toggle');
 		Route::post('/{type}/import',            [MappingController::class, 'import']) ->name('.import');
+	});
+	
+	Route::prefix('customers')->name('.customers')->group(function () {
+		Route::get('/',          [CustomersController::class, 'index'])->name('');
+		Route::post('/fetch',    [CustomersController::class, 'fetch'])->name('.fetch');
+		Route::post('/pull',     [CustomersController::class, 'pull'])->name('.pull');
 	});
 });

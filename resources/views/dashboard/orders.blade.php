@@ -7,9 +7,9 @@
 {{-- Stats --}}
 <div class="grid grid-cols-3 gap-4 mb-4">
     @foreach([
-        ['label' => 'Shopify Orders', 'value' => $stats['shopify_total'], 'color' => 'indigo'],
-        ['label' => 'Amazon Orders',  'value' => $stats['amazon_total'],  'color' => 'amber'],
-        ['label' => 'Synced Today',   'value' => $stats['today'],         'color' => 'green'],
+        ['label' => ucfirst($ecomDriver ?? 'Ecom') . ' Orders', 'value' => $stats['ecom_total'] ?? 0, 'color' => 'indigo'],
+        ['label' => 'Amazon Orders',  'value' => $stats['amazon_total'] ?? 0,  'color' => 'amber'],
+        ['label' => 'Synced Today',   'value' => $stats['today'] ?? 0,         'color' => 'green'],
     ] as $s)
     <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-3">
         <div class="text-2xl font-bold text-{{ $s['color'] }}-600">{{ number_format($s['value']) }}</div>

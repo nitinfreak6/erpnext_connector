@@ -112,6 +112,53 @@ class ShopifyCustomerService
     }
 
     /**
+     * List customers with pagination
+     */
+    public function list(array $filters = []): array
+    {
+        $limit = $filters['limit'] ?? 250;
+        $cursor = $filters['cursor'] ?? null;
+        
+        $query = $this->customerFragment() . <<<'GQL'
+        query ListCustomers($first: Int!, $after: String) {
+            customers(first: $first, after: $after) {
+                edges {
+                    node { ...CustomerFields }
+                    cursor
+                }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                }
+            }
+        }
+        GQL;
+
+        $variables = ['first' => $limit];
+        if ($cursor) {
+            $variables['after'] = $cursor;
+        }
+
+        try {
+            $result = $this->graphql->query($query, $variables);
+            $edges  = $result['customers']['edges'] ?? [];
+            
+            $customers = [];
+            foreach ($edges as $edge) {
+                $customers[] = $this->normalizeCustomer($edge['node']);
+            }
+
+            return [
+                'customers' => $customers,
+                'pageInfo' => $result['customers']['pageInfo'] ?? null,
+            ];
+        } catch (\Throwable $e) {
+            Log::error("ShopifyCustomerService::list failed: " . $e->getMessage());
+            return ['customers' => [], 'pageInfo' => null];
+        }
+    }
+
+    /**
      * Build Shopify customer payload from Odoo partner data.
      * Returns REST-style array — converted to GraphQL in create/update.
      */
@@ -152,12 +199,8 @@ class ShopifyCustomerService
         if (isset($payload['email']))       $input['email']     = $payload['email'];
         if (isset($payload['phone']))       $input['phone']     = $payload['phone'] ?: null;
 
-        if (isset($payload['accepts_marketing'])) {
-            $input['emailMarketingConsent'] = [
-                'marketingState'     => $payload['accepts_marketing'] ? 'SUBSCRIBED' : 'UNSUBSCRIBED',
-                'marketingOptInLevel' => 'SINGLE_OPT_IN',
-            ];
-        }
+        // REMOVED: emailMarketingConsent - Shopify requires separate mutation
+        // If you need to update marketing consent, use customerEmailMarketingConsentUpdate mutation
 
         if (!empty($payload['addresses'])) {
             $input['addresses'] = array_map(fn($addr) => [
@@ -179,11 +222,17 @@ class ShopifyCustomerService
     private function normalizeCustomer(array $c): array
     {
         $address = $c['addresses'][0] ?? [];
+        
+        // Combine first and last name into full name
+        $firstName = $c['firstName'] ?? '';
+        $lastName = $c['lastName'] ?? '';
+        $fullName = trim("{$firstName} {$lastName}");
 
         return [
             'id'                => $this->fromGid($c['id']),
-            'first_name'        => $c['firstName'] ?? '',
-            'last_name'         => $c['lastName']  ?? '',
+            'name'              => $fullName ?: 'Shopify Customer',  // ← ADD THIS
+            'first_name'        => $firstName,
+            'last_name'         => $lastName,
             'email'             => $c['email']     ?? '',
             'phone'             => $c['phone']     ?? '',
             'accepts_marketing' => ($c['emailMarketingConsent']['marketingState'] ?? '') === 'SUBSCRIBED',
