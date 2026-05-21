@@ -16,8 +16,6 @@ class InventorySyncService
         private readonly ErpInterface            $erp,              // ← was OdooInventoryService
         private readonly ShopifyInventoryService $shopifyInventory,
         private readonly MappingService          $mappings,
-		private readonly SettingsService $settings,  // ← Add this
-
     ) {}
 
     /**
@@ -44,9 +42,9 @@ class InventorySyncService
         }
 
         // ── 2. Resolve Shopify location ──────────────────────────────────
-        $ecomLocationId = $this->resolveEcomLocation((string) $erpLocationId);
+        $shopifyLocationId = $this->resolveShopifyLocation((string) $erpLocationId);
 
-        if (!$ecomLocationId) {
+        if (!$shopifyLocationId) {
             $this->logSkipped($erpProductId, $erpLocationId, 'missing_shopify_location_map',
                 'No Shopify location mapped for this ERP location.');
             Log::debug("InventorySyncService: no Shopify location for ERP location #{$erpLocationId}");
@@ -58,14 +56,14 @@ class InventorySyncService
 
         // ── 4. Push to Shopify ───────────────────────────────────────────
         $log = SyncLog::create([
-            'direction'       => SyncLog::DIRECTION_ODOO_TO_SHOPIFY,
+            'direction'       => 'erp_to_ecom',
             'entity_type'     => SyncMapping::TYPE_INVENTORY_ITEM,
             'entity_id'       => (string) $erpProductId,
             'action'          => 'update',
             'status'          => SyncLog::STATUS_PROCESSING,
             'request_payload' => json_encode([
                 'inventory_item_id'   => $variantMapping->shopify_secondary_id,
-                'shopify_location_id' => $ecomLocationId,
+                'shopify_location_id' => $shopifyLocationId,
                 'erp_location_id'     => (string) $erpLocationId,
                 'available'           => $available,
             ]),
@@ -74,13 +72,12 @@ class InventorySyncService
         try {
             $this->shopifyInventory->setLevel(
                 $variantMapping->shopify_secondary_id,
-                $ecomLocationId,
+                $shopifyLocationId,
                 $available
             );
 
             $log->markSuccess("Set to {$available}");
-            Log::info("InventorySyncService: ERP product #{$erpProductId} qty={$available} → " . 
-			ucfirst($this->settings->ecomDriver()) . " location {$ecomLocationId}");
+            Log::info("InventorySyncService: ERP product #{$erpProductId} qty={$available} → Shopify location {$shopifyLocationId}");
 
             return true;
         } catch (\Throwable $e) {
@@ -91,7 +88,7 @@ class InventorySyncService
 
     // ── Private helpers ──────────────────────────────────────────────────
 
-    private function resolveEcomLocation(string $erpLocationId): ?string
+    private function resolveShopifyLocation(string $erpLocationId): ?string
     {
         // 1 — DB mapping (editable from the Mappings UI)
         $mapping = ChannelMapping::ofType(ChannelMapping::TYPE_WAREHOUSE)

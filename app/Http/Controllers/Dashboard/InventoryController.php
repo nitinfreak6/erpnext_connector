@@ -24,16 +24,16 @@ class InventoryController extends Controller
             $entityTypes = [SyncMapping::TYPE_INVENTORY_ITEM, 'amazon_inventory'];
         }
 
-        // Get variant mappings (these hold inventory_item_id for Shopify)
+        // Get variant mappings (these hold inventory_item_id for ecom platform)
         $variantQuery = SyncMapping::where('entity_type', 'product_variant')
-            ->whereNotNull('shopify_secondary_id')
+            ->whereNotNull('ecom_secondary_id')
             ->orderByDesc('last_synced_at');
 
         if ($search) {
             $variantQuery->where(function ($q) use ($search) {
-                $q->where('odoo_reference', 'like', "%{$search}%")
-                  ->orWhere('odoo_id', 'like', "%{$search}%")
-                  ->orWhere('shopify_secondary_id', 'like', "%{$search}%");
+                $q->where('ecom_handle', 'like', "%{$search}%")
+                  ->orWhere('erp_id', 'like', "%{$search}%")
+                  ->orWhere('ecom_secondary_id', 'like', "%{$search}%");
             });
         }
 
@@ -50,8 +50,20 @@ class InventoryController extends Controller
         $recentLogs = $logsQuery->limit(30)->get();
 
         $syncState = [
-            'inventory'        => SyncQueueState::forType('inventory'),
-            'amazon_inventory' => SyncQueueState::forType('amazon_inventory'),
+            'inventory'        => SyncQueueState::where('sync_type', 'inventory')->first() 
+                ?? (object)[
+                    'is_running' => false, 
+                    'last_poll_at' => null, 
+                    'last_erp_write_date' => null,
+                    'last_odoo_write_date' => null,  // Backward compat
+                ],
+            'amazon_inventory' => SyncQueueState::where('sync_type', 'amazon_inventory')->first()
+                ?? (object)[
+                    'is_running' => false, 
+                    'last_poll_at' => null, 
+                    'last_erp_write_date' => null,
+                    'last_odoo_write_date' => null,  // Backward compat
+                ],
         ];
 
         // Stats
@@ -63,7 +75,7 @@ class InventoryController extends Controller
                                 ->where('status', 'failed')
                                 ->whereDate('created_at', today())->count(),
             'total_skus'    => SyncMapping::where('entity_type', 'product_variant')->count(),
-            'mapped_skus'   => SyncMapping::where('entity_type', 'product_variant')->whereNotNull('shopify_secondary_id')->count(),
+            'mapped_skus'   => SyncMapping::where('entity_type', 'product_variant')->whereNotNull('ecom_secondary_id')->count(),
         ];
 
         return view('dashboard.inventory', compact('variants', 'search', 'channel', 'recentLogs', 'syncState', 'stats'));

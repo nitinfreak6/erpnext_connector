@@ -117,9 +117,15 @@ class OdooErpAdapter implements ErpInterface
 
     // ── Orders ───────────────────────────────────────────────────────────
 
-    public function getOrdersModifiedSince(string $writeDate): array
+    public function getOrdersModifiedSince(string $writeDate, bool $onlyErpOrigin = false): array
     {
-        return $this->orders->getModifiedSince($writeDate);
+        return $this->orders->getModifiedSince($writeDate, $onlyErpOrigin);
+    }
+
+    public function getOrder(int $orderId): ?array
+    {
+        $orders = $this->orders->getById([$orderId]);
+        return $orders[0] ?? null;
     }
 
     public function getOrderLines(array $lineIds): array

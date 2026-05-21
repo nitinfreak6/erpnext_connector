@@ -25,19 +25,45 @@ class OdooOrderService
 
     /**
      * Get confirmed/done Odoo orders modified since write_date.
+     * 
+     * For ERP → Ecom sync: Fetch orders WITHOUT ecom origin (created in ERP)
+     * For Ecom → ERP sync: Fetch orders WITH ecom origin (to update fulfillment status)
+     * 
+     * @param string $writeDate
+     * @param bool $onlyErpOrigin If true, only fetch orders created in ERP (for ERP→Ecom sync)
      */
-    public function getModifiedSince(string $writeDate): array
+    public function getModifiedSince(string $writeDate, bool $onlyErpOrigin = false): array
     {
+        $domain = [
+            ['write_date', '>', $writeDate],
+            ['state', 'in', ['sale', 'done']],  // Only confirmed/completed orders
+        ];
+        
+        // For ERP → Ecom: Only sync orders created IN the ERP (not from ecom)
+        if ($onlyErpOrigin) {
+            // Exclude orders that came FROM ecom platforms
+            $domain[] = '!';  // NOT operator
+            $domain[] = ['origin', 'ilike', 'shopify'];
+            $domain[] = '!';
+            $domain[] = ['origin', 'ilike', 'woocommerce'];
+            $domain[] = '!';
+            $domain[] = ['origin', 'ilike', 'magento'];
+        }
+        
         return $this->odoo->searchRead(
             'sale.order',
-            [
-                ['write_date', '>', $writeDate],
-                ['state', 'in', ['sale', 'done', 'cancel']],
-                ['origin', 'like', 'Shopify'],
-            ],
+            $domain,
             self::ORDER_FIELDS,
             ['order' => 'write_date asc', 'limit' => 200]
         );
+    }
+
+    /**
+     * Get orders by their IDs.
+     */
+    public function getById(array $orderIds): array
+    {
+        return $this->odoo->read('sale.order', $orderIds, self::ORDER_FIELDS);
     }
 
     /**

@@ -143,7 +143,7 @@ class ShopifyOrderService
             $data['orders']['edges'] ?? []
         );
 
-        return ['orders' => $orders];
+        return $orders;  // Return orders directly, not wrapped
     }
 
     /**

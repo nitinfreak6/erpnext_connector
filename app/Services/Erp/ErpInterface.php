@@ -72,7 +72,21 @@ interface ErpInterface
     /**
      * Return orders modified after $writeDate.
      */
-    public function getOrdersModifiedSince(string $writeDate): array;
+    /**
+     * Get orders modified since a specific date.
+     * 
+     * @param string $writeDate ISO date
+     * @param bool $onlyErpOrigin If true, only fetch orders created in ERP (for ERP→Ecom sync)
+     */
+    public function getOrdersModifiedSince(string $writeDate, bool $onlyErpOrigin = false): array;
+
+    /**
+     * Get a single order by ID.
+     * 
+     * @param int $orderId
+     * @return array|null Order data or null if not found
+     */
+    public function getOrder(int $orderId): ?array;
 
     /**
      * Return order line records by their IDs.

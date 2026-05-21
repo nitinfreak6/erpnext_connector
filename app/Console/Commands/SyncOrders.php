@@ -2,58 +2,59 @@
 
 namespace App\Console\Commands;
 
+use App\Jobs\Ecom\FetchEcomOrdersJob;
 use App\Jobs\Erp\FetchErpOrdersJob;
-use App\Jobs\Shopify\ImportShopifyOrdersJob;
 use App\Models\SyncQueueState;
+use App\Services\SettingsService;
 use Illuminate\Console\Command;
 
 class SyncOrders extends Command
 {
     protected $signature = 'sync:orders
-                            {mode? : Optional mode alias (supports "full")}
-                            {--full : Reset cursor and check all ERP orders}
-                            {--dry-run : Print orders without dispatching}
-                            {--import-shopify : Import orders from Shopify into ERP}
-                            {--limit=50 : Number of Shopify orders to import when using --import-shopify}';
+                            {--full : Reset cursor and check all orders}
+                            {--dry-run : Print orders without dispatching}';
 
-    protected $description = 'Sync orders between ERP and Shopify';
+    protected $description = 'Sync orders bidirectionally based on settings';
 
-    public function handle(): int
+    public function handle(SettingsService $settings): int
     {
-        $mode          = (string) ($this->argument('mode') ?? '');
-        $full          = $this->option('full') || strtolower($mode) === 'full';
-        $dryRun        = (bool) $this->option('dry-run');
-        $importShopify = (bool) $this->option('import-shopify');
-        $limit         = max(1, (int) $this->option('limit'));
+        $full   = $this->option('full');
+        $dryRun = $this->option('dry-run');
 
         $this->info('Starting order sync...' . ($dryRun ? ' [DRY RUN]' : ''));
 
-        if ($dryRun && !$importShopify) {
-            $this->warn('Dry-run: would fetch ERP orders modified since last cursor and push fulfillments/cancellations to Shopify.');
-            return self::SUCCESS;
-        }
-
-        if ($importShopify) {
-            if ($dryRun) {
-                $this->warn("Dry-run: would import up to {$limit} Shopify orders into ERP.");
-                return self::SUCCESS;
-            }
-
-            ImportShopifyOrdersJob::dispatchSync($limit, false);
-            $this->info("Shopify order import completed (limit: {$limit}).");
+        if ($dryRun) {
+            $mode = $settings->salesOrderSyncMode();
+            $this->warn("Dry-run: would sync orders in '{$mode}' mode.");
             return self::SUCCESS;
         }
 
         if ($full) {
             SyncQueueState::forType('orders')->update([
-                'last_odoo_write_date' => null,
-                'is_running'           => false,
+                'last_erp_write_date' => null,
+                'last_ecom_write_date' => null,
+                'is_running' => false,
             ]);
         }
 
-        FetchErpOrdersJob::dispatch()->onQueue('sync');
+        $mode = $settings->salesOrderSyncMode();
+        
+        // Dispatch jobs based on sync mode
+        if ($mode === 'erp_to_ecom' || $mode === 'bidirectional') {
+            FetchErpOrdersJob::dispatch()->onQueue('sync');
+            $this->info('Dispatched: ERP → Ecom order sync');
+        }
+        
+        if ($mode === 'ecom_to_erp' || $mode === 'bidirectional') {
+            FetchEcomOrdersJob::dispatch()->onQueue('sync');
+            $this->info('Dispatched: Ecom → ERP order sync');
+        }
 
-        $this->info('Order sync job dispatched.');
+        if ($mode === 'disabled') {
+            $this->warn('Order sync is disabled in settings.');
+        }
+
+        $this->info('Order sync jobs dispatched.');
 
         return self::SUCCESS;
     }

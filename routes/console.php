@@ -20,34 +20,38 @@ Schedule::command('sync:inventory')
     ->skip(fn () => ! $inventoryEnabled())           // ← respects toggle
     ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:inventory failed'));
 
-// Cron 1: Fetch — runs at :00 and :30 of every hour
+// Products sync - dispatches jobs based on mode (erp_to_ecom, ecom_to_erp, bidirectional)
 Schedule::command('sync:products')
-    ->cron('0,30 * * * *')
+    ->everyFiveMinutes()
     ->withoutOverlapping(10)
     ->runInBackground()
     ->skip(fn () => ! $productEnabled())             // ← respects toggle
     ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:products failed'));
 
-// Cron 2: Push — runs at :10 and :40 of every hour (10 min after fetch)
+// Push products (ERP → Ecom only) - ONLY runs if mode allows pushing TO ecom
+$productMode = fn() => app(SettingsService::class)->productSyncMode();
 Schedule::command('sync:push-products --channel=both')
-    ->cron('10,40 * * * *')
+    ->everyTenMinutes()
     ->withoutOverlapping(15)
     ->runInBackground()
-    ->skip(fn () => ! $productEnabled())             // ← respects toggle
+    ->skip(fn () => ! $productEnabled() || $productMode() === 'ecom_to_erp')  // Skip if pulling FROM ecom
     ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:push-products failed'));
 
+// Orders sync - respects bidirectional mode
 Schedule::command('sync:orders')
-    ->hourly()
+    ->everyFiveMinutes()  // Orders are time-sensitive
     ->withoutOverlapping()
     ->runInBackground()
-    ->skip(fn () => ! $ordersEnabled())              // ← respects toggle
+    ->skip(fn () => ! $ordersEnabled())
     ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:orders failed'));
 
+// Customers sync - respects bidirectional mode  
 Schedule::command('sync:customers')
-    ->dailyAt('02:00')
+    ->everyFifteenMinutes()  // Changed from daily to 15 minutes
     ->withoutOverlapping()
     ->runInBackground()
-    ->skip(fn () => ! $customersEnabled());          // ← respects toggle
+    ->skip(fn () => ! $customersEnabled())
+    ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:customers failed'));
 
 // ── Amazon Sync ───────────────────────────────────────────────────────────────
 

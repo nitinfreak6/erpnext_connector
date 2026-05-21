@@ -22,7 +22,8 @@ class SyncProducts extends Command
         if ($this->option('status')) {
             $state = SyncQueueState::forType('products');
             $this->table(['Field', 'Value'], [
-                ['Last write_date cursor', $state->last_odoo_write_date ?? '<none>'],
+                ['Last ERP write_date cursor', $state->last_erp_write_date ?? $state->last_odoo_write_date ?? '<none>'],
+                ['Last Ecom write_date cursor', $state->last_ecom_write_date ?? '<none>'],
                 ['Last polled',            $state->last_poll_at?->diffForHumans() ?? 'never'],
                 ['Currently running',      $state->is_running ? 'YES' : 'no'],
                 ['Last error',             $state->notes ?? '-'],
@@ -37,32 +38,44 @@ class SyncProducts extends Command
             return self::SUCCESS;
         }
 
-        // ── Check sync direction ─────────────────────────────────────────
-        $mode = $settings->productSyncMode();
-        
-        if ($mode === 'ecom_to_erp' && ! $this->option('force')) {
-            $this->warn("Product sync direction is '{$mode}' (E-commerce → ERP).");
-            $this->line('  Products should be fetched FROM e-commerce, not FROM ERP.');
-            $this->line('  Use <comment>php artisan sync:pull-products-from-ecom</comment> instead.');
-            $this->line('  Or run with <comment>--force</comment> to override.');
-            return self::SUCCESS;
-        }
-
         if ($this->option('dry-run')) {
-            $this->info('Dry run — no jobs dispatched.');
+            $mode = $settings->productSyncMode();
+            $this->info("Dry run — would sync products in '{$mode}' mode.");
             return self::SUCCESS;
         }
 
         $full = (bool) $this->option('full');
+        $mode = $settings->productSyncMode();
 
-        $this->info('Fetching products from ERP' . ($full ? ' (FULL)' : ' (incremental)') . '...');
+        // Reset cursors if full sync
+        if ($full) {
+            SyncQueueState::forType('products')->update([
+                'last_erp_write_date' => null,
+                'last_ecom_write_date' => null,
+                'is_running' => false,
+            ]);
+        }
 
-        // fetch only — shopify/amazon flags are FALSE, push is handled by sync:push-products
-        FetchErpProductsJob::dispatchSync(
-            fullSync: $full,
-            shopify:  false,
-            amazon:   false,
-        );
+        // Dispatch jobs based on sync mode
+        if ($mode === 'erp_to_ecom' || $mode === 'bidirectional') {
+            $this->info('Fetching products from ERP' . ($full ? ' (FULL)' : ' (incremental)') . '...');
+            FetchErpProductsJob::dispatchSync(
+                fullSync: $full,
+                shopify:  false,
+                amazon:   false,
+            );
+            $this->info('Dispatched: ERP → Ecom product sync');
+        }
+        
+        if ($mode === 'ecom_to_erp' || $mode === 'bidirectional') {
+            $this->info('Pulling products from Ecom' . ($full ? ' (FULL)' : ' (incremental)') . '...');
+            \App\Jobs\Ecom\FetchEcomProductsJob::dispatch()->onQueue('sync');
+            $this->info('Dispatched: Ecom → ERP product sync');
+        }
+
+        if ($mode === 'disabled') {
+            $this->warn('Product sync is disabled in settings.');
+        }
 
         $this->info('Done.');
         return self::SUCCESS;

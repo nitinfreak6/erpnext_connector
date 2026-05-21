@@ -63,7 +63,14 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
 		Route::patch('/{odooId}/refresh',        [ProductsController::class, 'refresh'])    ->name('.refresh');
 	});
  
-    Route::get('/orders',    [OrdersController::class, 'index'])->name('.orders');
+  
+	
+	Route::get('/orders',    [OrdersController::class, 'index'])->name('.orders');
+    Route::prefix('orders')->name('.orders')->group(function () {
+        Route::post('/fetch', [OrdersController::class, 'fetch'])->name('.fetch');
+        Route::post('/pull', [OrdersController::class, 'pull'])->name('.pull');
+    });
+	
     Route::get('/inventory', [InventoryController::class, 'index'])->name('.inventory');
 	
 	Route::prefix('product-cache')->name('.product-cache')->group(function () {
