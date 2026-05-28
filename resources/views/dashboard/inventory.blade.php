@@ -66,12 +66,12 @@
             <tbody class="divide-y divide-gray-50">
                 @forelse($variants as $v)
                 <tr class="hover:bg-gray-50">
-                    <td class="px-4 py-3 font-mono text-xs font-medium text-gray-800">{{ $v->odoo_reference ?: '—' }}</td>
+                    <td class="px-4 py-3 font-mono text-xs font-medium text-gray-800">{{ $v->erp_reference ?? $v->odoo_reference ?: '—' }}</td>
                     <td class="px-4 py-3 font-mono text-xs text-gray-600">
-                        <span class="bg-gray-100 px-1.5 py-0.5 rounded">#{{ $v->odoo_id }}</span>
+                        <span class="bg-gray-100 px-1.5 py-0.5 rounded">#{{ $v->erp_id ?? $v->odoo_id }}</span>
                     </td>
-                    <td class="px-4 py-3 font-mono text-xs text-indigo-600">{{ $v->shopify_id }}</td>
-                    <td class="px-4 py-3 font-mono text-xs text-gray-500">{{ $v->shopify_secondary_id ?: '—' }}</td>
+                    <td class="px-4 py-3 font-mono text-xs text-indigo-600">{{ $v->ecom_id ?? $v->shopify_id }}</td>
+                    <td class="px-4 py-3 font-mono text-xs text-gray-500">{{ $v->ecom_secondary_id ?? $v->shopify_secondary_id ?: '—' }}</td>
                     <td class="px-4 py-3 text-xs text-gray-400">{{ $v->last_synced_at?->diffForHumans() ?? 'Never' }}</td>
                 </tr>
                 @empty

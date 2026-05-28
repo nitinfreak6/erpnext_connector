@@ -50,7 +50,7 @@
                 </button>
             </form>
         </div>
-        <p class="text-center text-slate-400 text-xs mt-6">Odoo–{{ $ecomDisplayName }} &copy; {{ date('Y') }}</p>
+        <p class="text-center text-slate-400 text-xs mt-6">{{ $erpDisplayName }}–{{ $ecomDisplayName }} &copy; {{ date('Y') }}</p>
     </div>
 </body>
 </html>

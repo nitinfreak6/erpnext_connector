@@ -19,9 +19,9 @@
             <h3 class="text-sm font-semibold text-gray-700">Sync Direction</h3>
             <p class="text-xs text-gray-500 mt-0.5">
                 @if($syncMode === 'erp_to_ecom')
-                    Orders created in <strong>{{ ucfirst($erpDriver) }}</strong>, fulfillments synced to <strong>{{ ucfirst($ecomDriver) }}</strong>
+                    Orders created in <strong>{{ $erpDisplayName }}</strong>, fulfillments synced to <strong>{{ $ecomDisplayName }}</strong>
                 @elseif($syncMode === 'ecom_to_erp')
-                    Orders imported from <strong>{{ ucfirst($ecomDriver) }}</strong> to <strong>{{ ucfirst($erpDriver) }}</strong>
+                    Orders imported from <strong>{{ $ecomDisplayName }}</strong> to <strong>{{ $erpDisplayName }}</strong>
                 @else
                     Orders flow in <strong>both directions</strong>
                 @endif
@@ -30,11 +30,11 @@
         <div class="flex items-center gap-2">
             @if($syncMode === 'erp_to_ecom')
                 <span class="px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium">
-                    {{ ucfirst($erpDriver) }} → {{ ucfirst($ecomDriver) }}
+                    {{ $erpDisplayName }} → {{ $ecomDisplayName }}
                 </span>
             @elseif($syncMode === 'ecom_to_erp')
                 <span class="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium">
-                    {{ ucfirst($ecomDriver) }} → {{ ucfirst($erpDriver) }}
+                    {{ $ecomDisplayName }} → {{ $erpDisplayName }}
                 </span>
             @else
                 <span class="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-xs font-medium">⟷ Bidirectional</span>
@@ -47,7 +47,7 @@
 <div class="grid grid-cols-4 gap-3 mb-4">
     @foreach([
         ['label' => 'Total Orders', 'value' => $stats['total'] ?? 0, 'color' => 'gray', 'bg' => 'bg-white'],
-        ['label' => ucfirst($ecomDriver) . ' Orders', 'value' => $stats['ecom_total'] ?? 0, 'color' => 'emerald', 'bg' => 'bg-emerald-50'],
+        ['label' => $ecomDisplayName . ' Orders', 'value' => $stats['ecom_total'] ?? 0, 'color' => 'emerald', 'bg' => 'bg-emerald-50'],
         ['label' => 'Amazon Orders', 'value' => $stats['amazon_total'] ?? 0, 'color' => 'amber', 'bg' => 'bg-amber-50'],
         ['label' => 'Synced Today', 'value' => $stats['today'] ?? 0, 'color' => 'blue', 'bg' => 'bg-blue-50'],
     ] as $card)
@@ -64,12 +64,12 @@
     <form method="POST" action="{{ route('dashboard.orders.fetch') }}">
         @csrf
         <button type="submit" 
-                onclick="return confirm('Fetch orders from {{ ucfirst($erpDriver) }} and create in {{ ucfirst($ecomDriver) }}?')"
+                onclick="return confirm('Fetch orders from {{ $erpDisplayName }} and create in {{ $ecomDisplayName }}?')"
                 class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
             </svg>
-            Fetch from {{ ucfirst($erpDriver) }}
+            Fetch from {{ $erpDisplayName }}
         </button>
     </form>
     @endif
@@ -78,12 +78,12 @@
     <form method="POST" action="{{ route('dashboard.orders.pull') }}">
         @csrf
         <button type="submit"
-                onclick="return confirm('Pull orders from {{ ucfirst($ecomDriver) }} and create in {{ ucfirst($erpDriver) }}?')"
+                onclick="return confirm('Pull orders from {{ $ecomDisplayName }} and create in {{ $erpDisplayName }}?')"
                 class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
             </svg>
-            Pull from {{ ucfirst($ecomDriver) }}
+            Pull from {{ $ecomDisplayName }}
         </button>
     </form>
     @endif
@@ -121,8 +121,8 @@
             <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                 <tr>
                     <th class="px-4 py-3 text-left font-medium">Channel</th>
-                    <th class="px-4 py-3 text-left font-medium">{{ ucfirst($erpDriver) }} Order ID</th>
-                    <th class="px-4 py-3 text-left font-medium">{{ ucfirst($ecomDriver) }} Order ID</th>
+                    <th class="px-4 py-3 text-left font-medium">{{ $erpDisplayName }} Order ID</th>
+                    <th class="px-4 py-3 text-left font-medium">{{ $ecomDisplayName }} Order ID</th>
                     <th class="px-4 py-3 text-left font-medium">Order Reference</th>
                     <th class="px-4 py-3 text-left font-medium">Last Synced</th>
                 </tr>

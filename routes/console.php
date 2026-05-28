@@ -38,14 +38,14 @@ Schedule::command('sync:push-products --channel=both')
     ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:push-products failed'));
 
 // Orders sync - respects bidirectional mode
-Schedule::command('sync:orders')
-    ->everyFiveMinutes()  // Orders are time-sensitive
-    ->withoutOverlapping()
-    ->runInBackground()
-    ->skip(fn () => ! $ordersEnabled())
-    ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:orders failed'));
+// Schedule::command('sync:orders')
+    // ->everyFiveMinutes()  // Orders are time-sensitive
+    // ->withoutOverlapping()
+    // ->runInBackground()
+    // ->skip(fn () => ! $ordersEnabled())
+    // ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:orders failed'));
 
-// Customers sync - respects bidirectional mode  
+//Customers sync - respects bidirectional mode  
 Schedule::command('sync:customers')
     ->everyFifteenMinutes()  // Changed from daily to 15 minutes
     ->withoutOverlapping()
@@ -55,28 +55,28 @@ Schedule::command('sync:customers')
 
 // ── Amazon Sync ───────────────────────────────────────────────────────────────
 
-$amazonEnabled = fn () => app(SettingsService::class)->isAmazonChannelEnabled();
+// $amazonEnabled = fn () => app(SettingsService::class)->isAmazonChannelEnabled();
 
-Schedule::command('sync:amazon-products')
-    ->hourly()
-    ->withoutOverlapping()
-    ->runInBackground()
-    ->skip(fn () => ! $amazonEnabled() || ! $productEnabled())
-    ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:amazon-products failed'));
+// Schedule::command('sync:amazon-products')
+    // ->hourly()
+    // ->withoutOverlapping()
+    // ->runInBackground()
+    // ->skip(fn () => ! $amazonEnabled() || ! $productEnabled())
+    // ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:amazon-products failed'));
 
-Schedule::command('sync:amazon-inventory')
-    ->everyFifteenMinutes()
-    ->withoutOverlapping()
-    ->runInBackground()
-    ->skip(fn () => ! $amazonEnabled() || ! $inventoryEnabled())
-    ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:amazon-inventory failed'));
+// Schedule::command('sync:amazon-inventory')
+    // ->everyFifteenMinutes()
+    // ->withoutOverlapping()
+    // ->runInBackground()
+    // ->skip(fn () => ! $amazonEnabled() || ! $inventoryEnabled())
+    // ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:amazon-inventory failed'));
 
-Schedule::command('sync:amazon-orders')
-    ->everyFifteenMinutes()
-    ->withoutOverlapping()
-    ->runInBackground()
-    ->skip(fn () => ! $amazonEnabled() || ! $ordersEnabled())
-    ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:amazon-orders failed'));
+// Schedule::command('sync:amazon-orders')
+    // ->everyFifteenMinutes()
+    // ->withoutOverlapping()
+    // ->runInBackground()
+    // ->skip(fn () => ! $amazonEnabled() || ! $ordersEnabled())
+    // ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('sync:amazon-orders failed'));
 
 // ── Maintenance ───────────────────────────────────────────────────────────────
 

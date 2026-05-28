@@ -64,7 +64,7 @@
             <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                 <tr>
                     <th class="px-4 py-3 text-left font-medium">Topic</th>
-                    <th class="px-4 py-3 text-left font-medium">Shopify Webhook ID</th>
+                    <th class="px-4 py-3 text-left font-medium">{{ $ecomDisplayName }} Webhook ID</th>
                     <th class="px-4 py-3 text-left font-medium">Shop Domain</th>
                     <th class="px-4 py-3 text-left font-medium">HMAC</th>
                     <th class="px-4 py-3 text-left font-medium">Status</th>

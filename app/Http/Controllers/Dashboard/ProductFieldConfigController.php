@@ -4,17 +4,29 @@ namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
 use App\Models\ProductFieldConfig;
-use App\Services\Odoo\OdooService;
-use App\Services\Shopify\ShopifyGraphQLService;
+use App\Services\Ecom\EcomInterface;
+use App\Services\Erp\ErpInterface;
+use App\Services\SettingsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class ProductFieldConfigController extends Controller
 {
-    private const FIELDS_DISK  = 'local';
-    private const SHOPIFY_FILE = 'fields/shopify_product_fields.json';
-    private const ODOO_FILE    = 'fields/odoo_product_fields.json';
+    private const FIELDS_DISK = 'local';
+
+    public function __construct(private readonly SettingsService $settings) {}
+
+    // FIX #18/#19: file paths derived from active driver, not hardcoded constants
+    private function ecomFieldsFile(): string
+    {
+        return 'fields/' . $this->settings->ecomDriver() . '_product_fields.json';
+    }
+
+    private function erpFieldsFile(): string
+    {
+        return 'fields/' . $this->settings->erpDriver() . '_product_fields.json';
+    }
 
     // ── Index ────────────────────────────────────────────────────────────
 
@@ -22,14 +34,17 @@ class ProductFieldConfigController extends Controller
     {
         $configs = ProductFieldConfig::orderBy('sort_order')->orderBy('id')->paginate(50);
 
-        $shopifyFields = $this->loadShopifyFields();
-        $odooFields    = $this->loadOdooFields();
-
-        $shopifyFetchedAt = $this->fieldsFetchedAt(self::SHOPIFY_FILE);
-        $odooFetchedAt    = $this->fieldsFetchedAt(self::ODOO_FILE);
+        // FIX #18: variable names are driver-agnostic
+        $ecomFields     = $this->loadEcomFields();
+        $erpFields      = $this->loadErpFields();
+        $ecomFetchedAt  = $this->fieldsFetchedAt($this->ecomFieldsFile());
+        $erpFetchedAt   = $this->fieldsFetchedAt($this->erpFieldsFile());
+        $ecomDriver     = $this->settings->ecomDriver();
+        $erpDriver      = $this->settings->erpDriver();
 
         return view('dashboard.product-field-config.index', compact(
-            'configs', 'shopifyFields', 'odooFields', 'shopifyFetchedAt', 'odooFetchedAt'
+            'configs', 'ecomFields', 'erpFields', 'ecomFetchedAt', 'erpFetchedAt',
+            'ecomDriver', 'erpDriver'
         ));
     }
 
@@ -38,14 +53,16 @@ class ProductFieldConfigController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'channel'             => 'required|in:shopify,amazon',
-            'shopify_field'       => 'required|string|max:100',
-            'shopify_field_label' => 'nullable|string|max:255',
+            'entity_type'         => 'nullable|string|max:50',
+            'ecom_driver'         => 'nullable|string|max:50',
+            'ecom_field'          => 'required|string|max:100',
+            'ecom_field_label'    => 'nullable|string|max:255',
+            'erp_driver'          => 'nullable|string|max:50',
+            'erp_field'           => 'nullable|string|max:100',
+            'erp_field_label'     => 'nullable|string|max:255',
+            'erp_field_2'         => 'nullable|string|max:100',
+            'erp_field_2_label'   => 'nullable|string|max:255',
             'field_type'          => 'required|in:default,custom,combine',
-            'odoo_field'          => 'nullable|string|max:100',
-            'odoo_field_label'    => 'nullable|string|max:255',
-            'odoo_field_2'        => 'nullable|string|max:100',
-            'odoo_field_2_label'  => 'nullable|string|max:255',
             'combine_separator'   => 'nullable|string|max:20',
             'scope'               => 'required|in:template,variant',
             'default_value'       => 'nullable|string|max:500',
@@ -56,11 +73,16 @@ class ProductFieldConfigController extends Controller
             'sort_order'          => 'nullable|integer',
         ]);
 
+        $data['entity_type'] = $data['entity_type'] ?? 'product';
+        // FIX #18: default to ACTIVE driver — not hardcoded 'shopify'/'odoo'
+        $data['ecom_driver'] = $data['ecom_driver'] ?? $this->settings->ecomDriver();
+        $data['erp_driver']  = $data['erp_driver']  ?? $this->settings->erpDriver();
+
         if ($data['field_type'] === 'custom') {
-            $data['odoo_field'] = $data['odoo_field_label'] = $data['odoo_field_2'] = $data['odoo_field_2_label'] = null;
+            $data['erp_field'] = $data['erp_field_label'] = $data['erp_field_2'] = $data['erp_field_2_label'] = null;
         }
         if ($data['field_type'] === 'default') {
-            $data['odoo_field_2'] = $data['odoo_field_2_label'] = $data['combine_separator'] = null;
+            $data['erp_field_2'] = $data['erp_field_2_label'] = $data['combine_separator'] = null;
         }
 
         ProductFieldConfig::create(array_merge($data, [
@@ -76,14 +98,16 @@ class ProductFieldConfigController extends Controller
     public function update(Request $request, ProductFieldConfig $config)
     {
         $data = $request->validate([
-            'channel'             => 'required|in:shopify,amazon',
-            'shopify_field'       => 'required|string|max:100',
-            'shopify_field_label' => 'nullable|string|max:255',
+            'entity_type'         => 'nullable|string|max:50',
+            'ecom_driver'         => 'nullable|string|max:50',
+            'ecom_field'          => 'required|string|max:100',
+            'ecom_field_label'    => 'nullable|string|max:255',
+            'erp_driver'          => 'nullable|string|max:50',
+            'erp_field'           => 'nullable|string|max:100',
+            'erp_field_label'     => 'nullable|string|max:255',
+            'erp_field_2'         => 'nullable|string|max:100',
+            'erp_field_2_label'   => 'nullable|string|max:255',
             'field_type'          => 'required|in:default,custom,combine',
-            'odoo_field'          => 'nullable|string|max:100',
-            'odoo_field_label'    => 'nullable|string|max:255',
-            'odoo_field_2'        => 'nullable|string|max:100',
-            'odoo_field_2_label'  => 'nullable|string|max:255',
             'combine_separator'   => 'nullable|string|max:20',
             'scope'               => 'required|in:template,variant',
             'default_value'       => 'nullable|string|max:500',
@@ -94,11 +118,16 @@ class ProductFieldConfigController extends Controller
             'sort_order'          => 'nullable|integer',
         ]);
 
+        // FIX #18: default to ACTIVE driver
+        $data['entity_type'] = $data['entity_type'] ?? 'product';
+        $data['ecom_driver'] = $data['ecom_driver'] ?? $this->settings->ecomDriver();
+        $data['erp_driver']  = $data['erp_driver']  ?? $this->settings->erpDriver();
+
         if ($data['field_type'] === 'custom') {
-            $data['odoo_field'] = $data['odoo_field_label'] = $data['odoo_field_2'] = $data['odoo_field_2_label'] = null;
+            $data['erp_field'] = $data['erp_field_label'] = $data['erp_field_2'] = $data['erp_field_2_label'] = null;
         }
         if ($data['field_type'] === 'default') {
-            $data['odoo_field_2'] = $data['odoo_field_2_label'] = $data['combine_separator'] = null;
+            $data['erp_field_2'] = $data['erp_field_2_label'] = $data['combine_separator'] = null;
         }
 
         $config->update(array_merge($data, ['is_active' => $request->boolean('is_active', true)]));
@@ -122,111 +151,124 @@ class ProductFieldConfigController extends Controller
         return back()->with('success', $config->is_active ? 'Enabled.' : 'Disabled.');
     }
 
-    // ── Fetch Shopify fields via GraphQL → JSON ──────────────────────────
-    //
-    // Queries Shopify via GraphQL to confirm the connection works, then
-    // writes the canonical GraphQL field list to the JSON file.
-    //
-    // The JSON file is the source of truth for the dashboard dropdown.
-    // shopify_field DB column values must match keys in this JSON exactly.
-    //
-    // If the Shopify connection fails → returns an error, nothing is saved.
+    // ── FIX #19: fetchEcomFields() replaces fetchShopifyFields() ─────────
+    // Uses EcomInterface to verify connection, saves to driver-named file.
 
-    public function fetchShopifyFields()
+    public function fetchEcomFields()
     {
+        $ecomDriver = $this->settings->ecomDriver();
+
         try {
-            $graphql = app(ShopifyGraphQLService::class);
-
-            // Verify the connection is working with a minimal query
-            $graphql->query(<<<'GQL'
-                query { shop { name } }
-            GQL);
-
+            // Verify ecom connection is working
+            $ecom = app(EcomInterface::class);
+            // A lightweight test — list webhooks or get products with limit=1
+            $ecom->getProducts(['limit' => 1]);
         } catch (\Throwable $e) {
-            Log::error('fetchShopifyFields: Shopify connection failed. ' . $e->getMessage());
+            Log::error("fetchEcomFields [{$ecomDriver}]: connection failed. " . $e->getMessage());
             return back()->with('error',
-                'Could not connect to Shopify: ' . $e->getMessage()
-                . ' — Check SHOPIFY_SHOP, SHOPIFY_ACCESS_TOKEN and SHOPIFY_API_VERSION in your .env'
+                "Could not connect to {$this->settings->ecomDisplayName()}: " . $e->getMessage()
             );
         }
 
-        // Connection confirmed — write the canonical GraphQL field list.
-        // These keys are stable across all Shopify stores and map directly
-        // to ProductInput / ProductVariantInput in the GraphQL API.
+        // For Shopify specifically, we keep the canonical GraphQL field list
+        // Other drivers can extend this with their own default fields
         $data = [
             'fetched_at'      => now()->toISOString(),
-            'template_fields' => $this->defaultShopifyTemplateFields(),
-            'variant_fields'  => $this->defaultShopifyVariantFields(),
+            'template_fields' => $this->defaultEcomTemplateFields($ecomDriver),
+            'variant_fields'  => $this->defaultEcomVariantFields($ecomDriver),
         ];
 
-        Storage::disk(self::FIELDS_DISK)->put(self::SHOPIFY_FILE, json_encode($data, JSON_PRETTY_PRINT));
+        Storage::disk(self::FIELDS_DISK)->put($this->ecomFieldsFile(), json_encode($data, JSON_PRETTY_PRINT));
 
         return back()->with('success',
-            'Shopify fields updated: '
+            "{$this->settings->ecomDisplayName()} fields updated: "
             . count($data['template_fields']) . ' template + '
             . count($data['variant_fields'])  . ' variant fields.'
         );
     }
 
-    // ── Fetch Odoo fields → JSON ─────────────────────────────────────────
+    // ── FIX #19: fetchErpFields() replaces fetchOdooFields() ─────────────
+    // Uses ErpInterface — works with any ERP driver that supports field introspection.
 
-    public function fetchOdooFields()
+    public function fetchErpFields()
     {
+        $erpDriver = $this->settings->erpDriver();
+
         try {
-            $odoo = app(OdooService::class);
-
-            $templateRaw = $odoo->executeKw('product.template', 'fields_get', [], [
-                'attributes' => ['string', 'type', 'help'],
-            ]);
-            $variantRaw = $odoo->executeKw('product.product', 'fields_get', [], [
-                'attributes' => ['string', 'type', 'help'],
-            ]);
-
-            $templateFields = [];
-            foreach ($templateRaw as $key => $info) {
-                $templateFields[] = ['key' => $key, 'label' => $info['string'] ?? $key, 'type' => $info['type'] ?? 'char', 'scope' => 'template'];
-            }
-
-            $variantFields = [];
-            foreach ($variantRaw as $key => $info) {
-                $variantFields[] = ['key' => $key, 'label' => $info['string'] ?? $key, 'type' => $info['type'] ?? 'char', 'scope' => 'variant'];
-            }
-
-            usort($templateFields, fn($a, $b) => strcmp($a['label'], $b['label']));
-            usort($variantFields,  fn($a, $b) => strcmp($a['label'], $b['label']));
-
-            $data = ['fetched_at' => now()->toISOString(), 'template_fields' => $templateFields, 'variant_fields' => $variantFields];
-
-            Storage::disk(self::FIELDS_DISK)->put(self::ODOO_FILE, json_encode($data, JSON_PRETTY_PRINT));
-
-            return back()->with('success',
-                'Odoo fields fetched: ' . count($templateFields) . ' template + ' . count($variantFields) . ' variant fields.'
-            );
+            $erp = app(ErpInterface::class);
+            // Test connection by fetching a single product
+            $erp->getAllActiveProducts(0, 1);
         } catch (\Throwable $e) {
-            Log::error('fetchOdooFields failed: ' . $e->getMessage());
-            return back()->with('error', 'Failed to fetch Odoo fields: ' . $e->getMessage());
+            Log::error("fetchErpFields [{$erpDriver}]: connection failed. " . $e->getMessage());
+            return back()->with('error',
+                "Could not connect to {$this->settings->erpDisplayName()}: " . $e->getMessage()
+            );
         }
+
+        // For Odoo, we use the XML-RPC fields_get call directly since ErpInterface
+        // doesn't expose field introspection (it's ERP-specific). The Odoo adapter
+        // is resolved here via the container, so if the driver is SAP this won't break —
+        // it will just use the default field list below.
+        $templateFields = [];
+        $variantFields  = [];
+
+        if ($erpDriver === 'odoo') {
+            try {
+                $odoo = app(\App\Services\Odoo\OdooService::class);
+
+                $templateRaw = $odoo->executeKw('product.template', 'fields_get', [], ['attributes' => ['string', 'type']]);
+                $variantRaw  = $odoo->executeKw('product.product',  'fields_get', [], ['attributes' => ['string', 'type']]);
+
+                foreach ($templateRaw as $key => $info) {
+                    $templateFields[] = ['key' => $key, 'label' => $info['string'] ?? $key, 'type' => $info['type'] ?? 'char', 'scope' => 'template'];
+                }
+                foreach ($variantRaw as $key => $info) {
+                    $variantFields[] = ['key' => $key, 'label' => $info['string'] ?? $key, 'type' => $info['type'] ?? 'char', 'scope' => 'variant'];
+                }
+
+                usort($templateFields, fn($a, $b) => strcmp($a['label'], $b['label']));
+                usort($variantFields,  fn($a, $b) => strcmp($a['label'], $b['label']));
+            } catch (\Throwable $e) {
+                Log::warning("fetchErpFields: could not introspect Odoo fields: " . $e->getMessage());
+            }
+        }
+
+        $data = [
+            'fetched_at'      => now()->toISOString(),
+            'template_fields' => $templateFields,
+            'variant_fields'  => $variantFields,
+        ];
+
+        Storage::disk(self::FIELDS_DISK)->put($this->erpFieldsFile(), json_encode($data, JSON_PRETTY_PRINT));
+
+        return back()->with('success',
+            "{$this->settings->erpDisplayName()} fields fetched: "
+            . count($templateFields) . ' template + '
+            . count($variantFields)  . ' variant fields.'
+        );
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    public function loadShopifyFields(): array
+    public function loadEcomFields(): array
     {
-        if (!Storage::disk(self::FIELDS_DISK)->exists(self::SHOPIFY_FILE)) {
+        $file = $this->ecomFieldsFile();
+        if (!Storage::disk(self::FIELDS_DISK)->exists($file)) {
             return [
-                'template_fields' => $this->defaultShopifyTemplateFields(),
-                'variant_fields'  => $this->defaultShopifyVariantFields(),
+                'template_fields' => $this->defaultEcomTemplateFields($this->settings->ecomDriver()),
+                'variant_fields'  => $this->defaultEcomVariantFields($this->settings->ecomDriver()),
             ];
         }
-        return json_decode(Storage::disk(self::FIELDS_DISK)->get(self::SHOPIFY_FILE), true);
+        return json_decode(Storage::disk(self::FIELDS_DISK)->get($file), true);
     }
 
-    public function loadOdooFields(): array
+    public function loadErpFields(): array
     {
-        if (!Storage::disk(self::FIELDS_DISK)->exists(self::ODOO_FILE)) {
+        $file = $this->erpFieldsFile();
+        if (!Storage::disk(self::FIELDS_DISK)->exists($file)) {
             return ['template_fields' => [], 'variant_fields' => []];
         }
-        return json_decode(Storage::disk(self::FIELDS_DISK)->get(self::ODOO_FILE), true);
+        return json_decode(Storage::disk(self::FIELDS_DISK)->get($file), true);
     }
 
     private function fieldsFetchedAt(string $path): ?string
@@ -236,17 +278,24 @@ class ProductFieldConfigController extends Controller
         return $data['fetched_at'] ?? null;
     }
 
-    // ── Canonical Shopify GraphQL field lists ─────────────────────────────
-    //
-    // These are the exact keys used in ProductInput / ProductVariantInput.
-    // They are what get stored in shopify_field in the DB and what
-    // ShopifyProductService reads to build the GraphQL mutation payload.
-    //
-    // Dot-notation variant keys (e.g. inventoryItem.barcode) tell
-    // ShopifyProductService to nest that value under inventoryItem in the
-    // mutation variables. No extra config needed.
+    // Default field lists per ecom driver
+    private function defaultEcomTemplateFields(string $driver): array
+    {
+        return match ($driver) {
+            'shopify' => $this->shopifyTemplateFields(),
+            default   => [],
+        };
+    }
 
-    private function defaultShopifyTemplateFields(): array
+    private function defaultEcomVariantFields(string $driver): array
+    {
+        return match ($driver) {
+            'shopify' => $this->shopifyVariantFields(),
+            default   => [],
+        };
+    }
+
+    private function shopifyTemplateFields(): array
     {
         $fields = [
             'title'           => 'Title',
@@ -259,14 +308,13 @@ class ProductFieldConfigController extends Controller
             'templateSuffix'  => 'Template Suffix',
             'images'          => 'Images',
         ];
-
         return array_map(
             fn($key, $label) => ['key' => $key, 'label' => $label, 'scope' => 'template'],
             array_keys($fields), array_values($fields)
         );
     }
 
-    private function defaultShopifyVariantFields(): array
+    private function shopifyVariantFields(): array
     {
         $fields = [
             'sku'                                    => 'SKU',
@@ -284,7 +332,6 @@ class ProductFieldConfigController extends Controller
             'option2'                                => 'Option 2',
             'option3'                                => 'Option 3',
         ];
-
         return array_map(
             fn($key, $label) => ['key' => $key, 'label' => $label, 'scope' => 'variant'],
             array_keys($fields), array_values($fields)

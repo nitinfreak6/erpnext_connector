@@ -90,8 +90,8 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
     Route::put('/{config}',                            [ProductFieldConfigController::class, 'update'])           ->name('.update');
     Route::delete('/{config}',                         [ProductFieldConfigController::class, 'destroy'])          ->name('.destroy');
     Route::patch('/{config}/toggle',                   [ProductFieldConfigController::class, 'toggle'])           ->name('.toggle');
-    Route::post('/fetch-shopify-fields',               [ProductFieldConfigController::class, 'fetchShopifyFields'])->name('.fetch-shopify');
-    Route::post('/fetch-odoo-fields',                  [ProductFieldConfigController::class, 'fetchOdooFields'])  ->name('.fetch-odoo');
+    Route::post('/fetch-ecom-fields',   [ProductFieldConfigController::class, 'fetchEcomFields'])->name('.fetch-ecom-fields');
+    Route::post('/fetch-erp-fields',    [ProductFieldConfigController::class, 'fetchErpFields']) ->name('.fetch-erp-fields');
 });
 
     // Logs (viewer+)

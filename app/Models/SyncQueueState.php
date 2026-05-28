@@ -11,7 +11,8 @@ class SyncQueueState extends Model
     protected $fillable = [
         'sync_type',
         'last_poll_at',
-        'last_odoo_write_date',
+        'last_erp_write_date',   // FIX: renamed from last_odoo_write_date
+        'last_ecom_write_date',
         'is_running',
         'run_started_at',
         'notes',
@@ -39,13 +40,22 @@ class SyncQueueState extends Model
         ]);
     }
 
+    // FIX: writes last_erp_write_date — no longer Odoo-specific column name
     public function markComplete(string $writeDate): void
     {
         $this->update([
-            'is_running'            => false,
-            'last_poll_at'          => now(),
-            'last_odoo_write_date'  => $writeDate,
-            'run_started_at'        => null,
+            'is_running'          => false,
+            'last_poll_at'        => now(),
+            'last_erp_write_date' => $writeDate,
+            'run_started_at'      => null,
         ]);
+    }
+
+    // Backwards-compatible read: check new column first, fall back to old column name
+    public function getErpWriteDate(): string
+    {
+        return $this->last_erp_write_date
+            ?? $this->attributes['last_odoo_write_date']
+            ?? '2000-01-01 00:00:00';
     }
 }

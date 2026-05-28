@@ -25,9 +25,9 @@
             <h3 class="text-sm font-semibold text-gray-700">Sync Direction</h3>
             <p class="text-xs text-gray-500 mt-0.5">
                 @if($syncMode === 'erp_to_ecom')
-                    Customers managed in <strong>Odoo</strong>, synced to <strong>{{ ucfirst($ecomDriver) }}</strong>
+                    Customers managed in <strong>{{ $erpDisplayName }}</strong>, synced to <strong>{{ $ecomDisplayName }}</strong>
                 @elseif($syncMode === 'ecom_to_erp')
-                    Customers managed in <strong>{{ ucfirst($ecomDriver) }}</strong>, synced to <strong>Odoo</strong>
+                    Customers managed in <strong>{{ $ecomDisplayName }}</strong>, synced to <strong>{{ $erpDisplayName }}</strong>
                 @else
                     Customers managed in <strong>both systems</strong>
                 @endif
@@ -35,9 +35,9 @@
         </div>
         <div class="flex items-center gap-2">
             @if($syncMode === 'erp_to_ecom')
-                <span class="px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium">Odoo → {{ ucfirst($ecomDriver) }}</span>
+                <span class="px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium">{{ $erpDisplayName }} → {{ $ecomDisplayName }}</span>
             @elseif($syncMode === 'ecom_to_erp')
-                <span class="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium">{{ ucfirst($ecomDriver) }} → Odoo</span>
+                <span class="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium">{{ $ecomDisplayName }} → {{ $erpDisplayName }}</span>
             @else
                 <span class="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-xs font-medium">⟷ Bidirectional</span>
             @endif
@@ -52,7 +52,7 @@
         <nav class="-mb-px flex space-x-8">
             <a href="?direction=erp_to_ecom&search={{ $search }}&status={{ $status }}"
                class="py-3 px-1 border-b-2 font-medium text-sm {{ ($direction ?? 'erp_to_ecom') === 'erp_to_ecom' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' }}">
-                Odoo Customers
+                {{ $erpDisplayName }} Customers
                 @if(isset($stats['erp_to_ecom']))
                     <span class="ml-2 py-0.5 px-2 rounded-full text-xs {{ ($direction ?? 'erp_to_ecom') === 'erp_to_ecom' ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600' }}">
                         {{ $stats['erp_to_ecom']['total'] ?? 0 }}
@@ -156,12 +156,12 @@
     <form method="POST" action="{{ route('dashboard.customers.fetch') }}">
         @csrf
         <button type="submit"
-                onclick="return confirm('Fetch ALL Customers from Odoo now?')"
+                onclick="return confirm('Fetch ALL Customers from {{ $erpDisplayName }} now?')"
                 class="inline-flex items-center gap-1.5 bg-indigo-700 hover:bg-indigo-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
             </svg>
-            Fetch from Odoo
+            Fetch from {{ $erpDisplayName }}
         </button>
     </form>
     @endif
@@ -216,29 +216,29 @@
                     
                     @if($syncMode === 'erp_to_ecom' || ($syncMode === 'bidirectional' && ($direction ?? 'erp_to_ecom') === 'erp_to_ecom'))
                         {{-- ERP → Ecom data --}}
-                        <td class="px-4 py-3 text-gray-700 font-medium">#{{ $Customer->odoo_id }}</td>
+                        <td class="px-4 py-3 text-gray-700 font-medium">#{{ $Customer->erp_id ?? $Customer->odoo_id }}</td>
                         <td class="px-4 py-3">
                             <div class="text-gray-900 font-medium">{{ Str::limit($Customer->name ?? '—', 40) }}</div>
                         </td>
                         <td class="px-4 py-3 text-gray-600 font-mono text-xs">{{ $Customer->email ?? '—' }}</td>
                         <td class="px-4 py-3 text-gray-600">
-                            @if($Customer->shopify_Customer_id)
-                                <span class="font-mono text-xs">{{ $Customer->shopify_Customer_id }}</span>
+                            @if($Customer->ecom_id)
+                                <span class="font-mono text-xs">{{ $Customer->ecom_id }}</span>
                             @else
                                 <span class="text-gray-400">—</span>
                             @endif
                         </td>
                         <td class="px-4 py-3">
-                            @if($Customer->shopify_status === 'sent')
+                            @if($Customer->ecom_status === 'sent')
                                 <span class="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-md text-xs font-medium">✓ Sent</span>
-                            @elseif($Customer->shopify_status === 'failed')
+                            @elseif($Customer->ecom_status === 'failed')
                                 <span class="px-2 py-1 bg-red-100 text-red-700 rounded-md text-xs font-medium">✗ Failed</span>
                             @else
                                 <span class="px-2 py-1 bg-gray-100 text-gray-600 rounded-md text-xs font-medium">⏳ Pending</span>
                             @endif
                         </td>
                         <td class="px-4 py-3 text-gray-500 text-xs">
-                            {{ $Customer->shopify_synced_at ? $Customer->shopify_synced_at->diffForHumans() : '—' }}
+                            {{ $Customer->ecom_synced_at ? $Customer->ecom_synced_at->diffForHumans() : '—' }}
                         </td>
                         
                     @else
@@ -284,7 +284,7 @@
                         <p class="text-sm text-gray-400 font-medium">No Customers found</p>
                         <p class="text-xs text-gray-300 mt-1">
                             @if($syncMode === 'erp_to_ecom')
-                                Click <strong>Fetch from Odoo</strong> to import Customers
+                                Click <strong>Fetch from {{ $erpDisplayName }}</strong> to import Customers
                             @elseif($syncMode === 'ecom_to_erp')
                                 Click <strong>Pull from {{ ucfirst($ecomDriver) }}</strong> to import Customers
                             @else

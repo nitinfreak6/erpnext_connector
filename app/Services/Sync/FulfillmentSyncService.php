@@ -4,36 +4,35 @@ namespace App\Services\Sync;
 
 use App\Models\SyncLog;
 use App\Models\SyncMapping;
+use App\Services\Ecom\EcomInterface;
 use App\Services\Erp\ErpInterface;
 use App\Services\MappingService;
-use App\Services\Shopify\ShopifyFulfillmentService;
-use App\Services\Shopify\ShopifyOrderService;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * FIX #20: EcomInterface replaces ShopifyFulfillmentService + ShopifyOrderService.
+ * Works with any ecom driver.
+ */
 class FulfillmentSyncService
 {
     public function __construct(
-        private readonly ErpInterface              $erp,                 // ← was OdooOrderService
-        private readonly ShopifyFulfillmentService $shopifyFulfillments,
-        private readonly ShopifyOrderService       $shopifyOrders,
-        private readonly MappingService            $mappings,
+        private readonly ErpInterface  $erp,
+        private readonly EcomInterface $ecom,    // FIX: was ShopifyFulfillmentService + ShopifyOrderService
+        private readonly MappingService $mappings,
     ) {}
 
-    /**
-     * Push fulfillment from ERP delivery to Shopify.
-     */
     public function syncFulfillment(array $erpOrder): bool
     {
         $erpOrderId = (string) $erpOrder['id'];
 
-        $orderMapping = $this->mappings->findByOdooId(SyncMapping::TYPE_ORDER, $erpOrderId);
+        $orderMapping = $this->mappings->findByErpId(SyncMapping::TYPE_ORDER, $erpOrderId);
 
         if (!$orderMapping) {
-            Log::debug("No Shopify mapping for ERP order #{$erpOrderId}, skipping fulfillment.");
+            Log::debug("FulfillmentSyncService: no ecom mapping for ERP order #{$erpOrderId}, skipping.");
             return false;
         }
 
-        $shopifyOrderId = $orderMapping->shopify_id;
+        $ecomOrderId = $orderMapping->ecom_id;
 
         $pickingIds = $erpOrder['picking_ids'] ?? [];
         if (empty($pickingIds)) {
@@ -54,40 +53,30 @@ class FulfillmentSyncService
             return false;
         }
 
-        $moveIds = $donePicking['move_ids'] ?? [];
-        $moves   = $moveIds ? $this->erp->getMoves($moveIds) : [];
+        $moves = $donePicking['move_ids']
+            ? $this->erp->getMoves($donePicking['move_ids'])
+            : [];
 
-        $shopifyOrder = $this->shopifyOrders->get($shopifyOrderId);
-        if (!$shopifyOrder) {
-            return false;
-        }
-
-        $shopifyLineItems = array_map(function ($item) {
-            $variantId      = (string) ($item['variant_id'] ?? '');
-            $variantMapping = $variantId
-                ? $this->mappings->findByShopifyId(SyncMapping::TYPE_PRODUCT_VARIANT, $variantId)
-                : null;
-
-            $item['_erp_product_id'] = $variantMapping ? (int) $variantMapping->odoo_id : null;
-            return $item;
-        }, $shopifyOrder['line_items'] ?? []);
-
-        $payload = $this->shopifyFulfillments->buildPayload($donePicking, $moves, $shopifyLineItems);
+        $fulfillmentData = [
+            'tracking_number'  => $donePicking['carrier_tracking_ref'] ?? null,
+            'tracking_company' => $donePicking['carrier_id'][1] ?? null,
+            'line_items'       => $moves,
+        ];
 
         $log = SyncLog::create([
-            'direction'       => SyncLog::DIRECTION_ODOO_TO_SHOPIFY,
+            'direction'       => SyncLog::DIRECTION_ERP_TO_ECOM,
             'entity_type'     => 'fulfillment',
             'entity_id'       => $erpOrderId,
             'action'          => 'fulfill',
             'status'          => SyncLog::STATUS_PROCESSING,
-            'request_payload' => json_encode($payload),
+            'request_payload' => json_encode($fulfillmentData),
         ]);
 
         try {
-            $fulfillment = $this->shopifyFulfillments->create($shopifyOrderId, $payload);
+            // FIX: uses EcomInterface::createFulfillment() — not Shopify-specific
+            $fulfillment = $this->ecom->createFulfillment($ecomOrderId, $fulfillmentData);
             $log->markSuccess(json_encode(['fulfillment_id' => $fulfillment['id'] ?? null]));
-            Log::info("Fulfillment synced: ERP order #{$erpOrderId} → Shopify #{$shopifyOrderId} [{$this->erp->driverName()}]");
-
+            Log::info("FulfillmentSyncService [{$this->ecom->driverName()}]: ERP #{$erpOrderId} → ecom #{$ecomOrderId}");
             return true;
         } catch (\Throwable $e) {
             $log->markFailed($e->getMessage());
@@ -95,19 +84,16 @@ class FulfillmentSyncService
         }
     }
 
-    /**
-     * Push cancellation from ERP to Shopify.
-     */
     public function syncCancellation(string $erpOrderId): bool
     {
-        $orderMapping = $this->mappings->findByOdooId(SyncMapping::TYPE_ORDER, $erpOrderId);
+        $orderMapping = $this->mappings->findByErpId(SyncMapping::TYPE_ORDER, $erpOrderId);
 
         if (!$orderMapping) {
             return false;
         }
 
         $log = SyncLog::create([
-            'direction'   => 'erp_to_ecom',
+            'direction'   => SyncLog::DIRECTION_ERP_TO_ECOM,
             'entity_type' => SyncMapping::TYPE_ORDER,
             'entity_id'   => $erpOrderId,
             'action'      => 'cancel',
@@ -115,9 +101,9 @@ class FulfillmentSyncService
         ]);
 
         try {
-            $this->shopifyOrders->cancel($orderMapping->shopify_id);
+            // FIX: uses EcomInterface::cancelOrder() — not Shopify-specific
+            $this->ecom->cancelOrder($orderMapping->ecom_id, 'Cancelled in ERP');
             $log->markSuccess('Cancelled');
-
             return true;
         } catch (\Throwable $e) {
             $log->markFailed($e->getMessage());

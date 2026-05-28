@@ -12,12 +12,20 @@ class SyncOrders extends Command
 {
     protected $signature = 'sync:orders
                             {--full : Reset cursor and check all orders}
-                            {--dry-run : Print orders without dispatching}';
+                            {--dry-run : Print orders without dispatching}
+                            {--force : Run even when order sync is disabled}';
 
     protected $description = 'Sync orders bidirectionally based on settings';
 
     public function handle(SettingsService $settings): int
     {
+        // FIX #14: check enable flag before dispatching
+        if (!$settings->isSalesOrderSyncEnabled() && !$this->option('force')) {
+            $this->warn('Order sync is DISABLED in settings (sales_order_sync_enabled = off).');
+            $this->line('  Run with <comment>--force</comment> to override.');
+            return self::SUCCESS;
+        }
+
         $full   = $this->option('full');
         $dryRun = $this->option('dry-run');
 
@@ -31,31 +39,29 @@ class SyncOrders extends Command
 
         if ($full) {
             SyncQueueState::forType('orders')->update([
-                'last_erp_write_date' => null,
+                'last_erp_write_date'  => null,
                 'last_ecom_write_date' => null,
-                'is_running' => false,
+                'is_running'           => false,
             ]);
         }
 
         $mode = $settings->salesOrderSyncMode();
-        
-        // Dispatch jobs based on sync mode
+
         if ($mode === 'erp_to_ecom' || $mode === 'bidirectional') {
             FetchErpOrdersJob::dispatch()->onQueue('sync');
             $this->info('Dispatched: ERP → Ecom order sync');
         }
-        
+
         if ($mode === 'ecom_to_erp' || $mode === 'bidirectional') {
             FetchEcomOrdersJob::dispatch()->onQueue('sync');
             $this->info('Dispatched: Ecom → ERP order sync');
         }
 
         if ($mode === 'disabled') {
-            $this->warn('Order sync is disabled in settings.');
+            $this->warn('Order sync mode is set to disabled.');
         }
 
         $this->info('Order sync jobs dispatched.');
-
         return self::SUCCESS;
     }
 }

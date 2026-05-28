@@ -2,227 +2,137 @@
 
 namespace App\Services\Sync;
 
-use App\Models\ChannelMapping;
-use App\Models\SyncLog;
-use App\Models\SyncMapping;
+use App\Models\ProductFieldConfig;
 use App\Services\ChannelMappingService;
+use App\Services\Ecom\EcomInterface;
 use App\Services\Erp\ErpInterface;
 use App\Services\MappingService;
+use App\Services\SettingsService;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * OrderSyncService - Orchestrates order sync using UniversalSyncService
+ */
 class OrderSyncService
 {
     public function __construct(
-        private readonly ErpInterface          $erp,             // ← was OdooOrderService + OdooCustomerService
-        private readonly MappingService        $mappings,
-        private readonly ChannelMappingService $channelMappings,
+        private readonly ErpInterface           $erp,
+        private readonly EcomInterface          $ecom,
+        private readonly UniversalSyncService   $universalSync,
+        private readonly MappingService         $mappings,
+        private readonly ChannelMappingService  $channelMappings,
+        private readonly SettingsService        $settings,
     ) {}
 
-    /**
-     * Create an ERP order from a Shopify order payload.
-     */
-    public function createInErp(array $shopifyOrder): int
+    public function isErpToEcom(): bool
     {
-        $shopifyOrderId = (string) $shopifyOrder['id'];
+        return $this->settings->orderSyncMode() === 'erp_to_ecom';
+    }
 
-        if ($this->mappings->findByShopifyId(SyncMapping::TYPE_ORDER, $shopifyOrderId)) {
-            Log::info("Shopify order #{$shopifyOrderId} already in ERP, skipping.");
-            return 0;
+    public function isEcomToErp(): bool
+    {
+        return $this->settings->orderSyncMode() === 'ecom_to_erp';
+    }
+
+    /**
+     * Sync ERP order/sales_order to ecommerce
+     */
+    public function syncErpOrderToEcom(array $erpOrder): string
+    {
+        if ($this->isEcomToErp()) {
+            throw new \LogicException('syncErpOrderToEcom() is for ERP → Ecom direction.');
         }
 
-        $log = SyncLog::create([
-            'direction'       => 'ecom_to_erp',
-            'entity_type'     => SyncMapping::TYPE_ORDER,
-            'entity_id'       => $shopifyOrderId,
-            'action'          => 'create',
-            'status'          => SyncLog::STATUS_PROCESSING,
-            'request_payload' => json_encode($shopifyOrder),
-        ]);
+        $erpId = (string) $erpOrder['id'];
 
         try {
-            $partnerId  = $this->resolveOrCreatePartner($shopifyOrder);
-            $orderLines = $this->buildOrderLines($shopifyOrder['line_items'] ?? [], $shopifyOrder);
-
-            if (!empty($shopifyOrder['shipping_lines'][0])) {
-                $orderLines[] = $this->buildShippingLine($shopifyOrder['shipping_lines'][0]);
-            }
-
-            $orderData = [
-                'client_order_ref'    => $shopifyOrder['name'],
-                'origin'              => 'Shopify #' . $shopifyOrder['name'],
-                'partner_id'          => $partnerId,
-                'partner_invoice_id'  => $partnerId,
-                'partner_shipping_id' => $partnerId,
-                'order_line'          => $orderLines,
-                'note'                => $shopifyOrder['note'] ?? '',
-                'date_order'          => date('Y-m-d H:i:s', strtotime($shopifyOrder['created_at'])),
-            ];
-
-            // ── Channel mappings (unchanged) ────────────────────────────
-            $orderTypeId = $this->channelMappings->odooSalesOrderType(ChannelMapping::CHANNEL_SHOPIFY);
-            if ($orderTypeId) {
-                $orderData['type_id'] = (int) $orderTypeId;
-            }
-
-            $salesRepId = $this->channelMappings->odooSalesRep(ChannelMapping::CHANNEL_SHOPIFY);
-            if ($salesRepId) {
-                $orderData['user_id'] = (int) $salesRepId;
-            }
-
-            $currency    = $shopifyOrder['currency'] ?? '';
-            $pricelistId = $currency
-                ? $this->channelMappings->odooPricelist($currency, ChannelMapping::CHANNEL_SHOPIFY)
-                : null;
-            if ($pricelistId) {
-                $orderData['pricelist_id'] = (int) $pricelistId;
-            }
-
-            $teamId = $this->channelMappings->resolve(
-                ChannelMapping::TYPE_CHANNEL,
-                ChannelMapping::CHANNEL_SHOPIFY,
-                'shopify'
+            $result = $this->universalSync->syncFromErpToEcom(
+                entityType: 'sales_order',
+                erpData: $erpOrder,
+                scope: 'header'
             );
-            if ($teamId) {
-                $orderData['team_id'] = (int) $teamId;
-            }
 
-            $erpOrderId = $this->erp->createOrder($orderData);
-
-            if (in_array($shopifyOrder['financial_status'] ?? '', ['paid', 'partially_paid'])) {
-                $this->erp->confirmOrder($erpOrderId);
-            }
-
-            $this->mappings->upsert(SyncMapping::TYPE_ORDER, (string) $erpOrderId, $shopifyOrderId, [
-                'shopify_handle' => $shopifyOrder['name'],
-                'last_synced_at' => now(),
-            ]);
-
-            $log->markSuccess(json_encode(['erp_order_id' => $erpOrderId]));
-            Log::info("Shopify order #{$shopifyOrderId} → ERP #{$erpOrderId} [{$this->erp->driverName()}]");
-
-            return $erpOrderId;
+            $ecomId = $result['id'] ?? $result['ecom_id'] ?? null;
+            Log::info("OrderSyncService: synced ERP order #{$erpId} → ecommerce #{$ecomId}");
+            return (string) $ecomId;
         } catch (\Throwable $e) {
-            $log->markFailed($e->getMessage(), ['trace' => substr($e->getTraceAsString(), 0, 500)]);
+            Log::error("OrderSyncService: ERP→Ecom sync failed for #{$erpId}", [
+                'error' => $e->getMessage(),
+            ]);
             throw $e;
         }
     }
 
     /**
-     * Kept for backwards compatibility with existing job calls.
-     * @deprecated Use createInErp() for new code.
+     * Sync ecommerce order to ERP (create draft order in ERP)
      */
-    public function createInOdoo(array $shopifyOrder): int
+    public function syncEcomOrderToErp(array $ecomOrder): int
     {
-        return $this->createInErp($shopifyOrder);
-    }
-
-    // ── Private helpers ──────────────────────────────────────────────────
-
-    private function resolveOrCreatePartner(array $shopifyOrder): int
-    {
-        $email = $shopifyOrder['email'] ?? '';
-
-        if ($email) {
-            $existing = $this->erp->findCustomerByEmail($email);
-            if ($existing) return $existing['id'];
+        if ($this->isErpToEcom()) {
+            throw new \LogicException('syncEcomOrderToErp() is for Ecom → ERP direction.');
         }
 
-        $billing   = $shopifyOrder['billing_address'] ?? $shopifyOrder['shipping_address'] ?? [];
-        $countryId = null;
-        $stateId   = null;
+        try {
+            $result = $this->universalSync->syncFromEcomToErp(
+                entityType: 'sales_order',
+                ecomData: $ecomOrder,
+                scope: 'header'
+            );
 
-        if (!empty($billing['country_code'])) {
-            $countryId = $this->erp->resolveCountry($billing['country_code']);
-            if ($countryId && !empty($billing['province_code'])) {
-                $stateId = $this->erp->resolveState($countryId, $billing['province_code']);
-            }
+            $erpId = $result['id'] ?? $result['erp_id'] ?? null;
+            Log::info("OrderSyncService: synced ecommerce order → ERP #{$erpId}");
+            return (int) $erpId;
+        } catch (\Throwable $e) {
+            Log::error("OrderSyncService: Ecom→ERP sync failed", [
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
         }
-
-        $name = trim(($billing['first_name'] ?? '') . ' ' . ($billing['last_name'] ?? ''));
-
-        $partnerData = [
-            'name'          => $name ?: ($email ?: 'Shopify Customer'),
-            'email'         => $email,
-            'phone'         => $billing['phone'] ?? '',
-            'street'        => $billing['address1'] ?? '',
-            'street2'       => $billing['address2'] ?? '',
-            'city'          => $billing['city'] ?? '',
-            'zip'           => $billing['zip'] ?? '',
-            'customer_rank' => 1,
-        ];
-
-        if ($countryId) $partnerData['country_id'] = $countryId;
-        if ($stateId)   $partnerData['state_id']   = $stateId;
-
-        return $this->erp->createCustomer($partnerData);
-    }
-
-    private function buildOrderLines(array $lineItems, array $shopifyOrder): array
-    {
-        $lines = [];
-
-        foreach ($lineItems as $item) {
-            $variantId      = (string) ($item['variant_id'] ?? '');
-            $variantMapping = $variantId
-                ? $this->mappings->findByShopifyId(SyncMapping::TYPE_PRODUCT_VARIANT, $variantId)
-                : null;
-
-            $line = [0, 0, [
-                'name'            => $item['title'] . (!empty($item['variant_title']) ? ' - ' . $item['variant_title'] : ''),
-                'product_uom_qty' => (float) $item['quantity'],
-                'price_unit'      => (float) $item['price'],
-            ]];
-
-            if ($variantMapping) {
-                $line[2]['product_id'] = (int) $variantMapping->odoo_id;
-            } else {
-                $line[2]['name'] .= ' [MISSING PRODUCT]';
-            }
-
-            $taxIds = $this->resolveTaxIds($item['tax_lines'] ?? [], ChannelMapping::CHANNEL_SHOPIFY);
-            if ($taxIds) {
-                $line[2]['tax_id'] = [[6, 0, $taxIds]];
-            }
-
-            $lines[] = $line;
-        }
-
-        return $lines;
-    }
-
-    private function buildShippingLine(array $shippingLine): array
-    {
-        $line = [0, 0, [
-            'name'            => 'Shipping: ' . ($shippingLine['title'] ?? 'Standard'),
-            'product_uom_qty' => 1,
-            'price_unit'      => (float) $shippingLine['price'],
-        ]];
-
-        $shippingProdId = $this->channelMappings->odooShippingProduct($shippingLine['title'] ?? '');
-        if ($shippingProdId) {
-            $line[2]['product_id'] = (int) $shippingProdId;
-        }
-
-        return $line;
-    }
-
-    private function resolveTaxIds(array $taxLines, string $channel): array
-    {
-        $taxIds = [];
-        foreach ($taxLines as $taxLine) {
-            $taxId = $this->channelMappings->odooTax($taxLine['title'] ?? '', $channel);
-            if ($taxId) {
-                $taxIds[] = (int) $taxId;
-            }
-        }
-        return array_unique($taxIds);
     }
 
     /**
-     * Alias for createInErp (generic method name)
+     * Sync order items (line items)
      */
-    public function importOrderToErp(array $ecomOrder): int
+    public function syncOrderItems(array $order, string $direction = 'erp_to_ecom'): array
     {
-        return $this->createInErp($ecomOrder);
+        $syncedItems = [];
+
+        foreach ($order['items'] ?? [] as $item) {
+            try {
+                if ($direction === 'erp_to_ecom') {
+                    $result = $this->universalSync->syncFromErpToEcom(
+                        entityType: 'sales_order_line',
+                        erpData: $item,
+                        scope: 'line'
+                    );
+                } else {
+                    $result = $this->universalSync->syncFromEcomToErp(
+                        entityType: 'sales_order_line',
+                        ecomData: $item,
+                        scope: 'line'
+                    );
+                }
+
+                $syncedItems[] = $result;
+            } catch (\Throwable $e) {
+                Log::warning("OrderSyncService: failed to sync order item", [
+                    'error' => $e->getMessage(),
+                    'item_id' => $item['id'] ?? null,
+                ]);
+            }
+        }
+
+        return $syncedItems;
+    }
+
+    public function getFieldConfigs(string $entityType, string $ecomDriver, string $erpDriver)
+    {
+        return ProductFieldConfig::query()
+            ->where('entity_type', $entityType)
+            ->where('ecom_driver', $ecomDriver)
+            ->where('erp_driver', $erpDriver)
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->get();
     }
 }

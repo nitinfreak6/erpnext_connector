@@ -17,7 +17,7 @@
         <div>
             <h2 class="text-lg font-semibold text-gray-800">{{ $cacheRecord->name }}</h2>
             <p class="text-xs text-gray-400">
-                Odoo ID: {{ $cacheRecord->odoo_id }}
+                {{ $erpDisplayName }} ID: {{ $cacheRecord->erp_id ?? $cacheRecord->odoo_id }}
                 @if($cacheRecord->default_code) · SKU: {{ $cacheRecord->default_code }} @endif
                 · Fetched: {{ $cacheRecord->fetched_at?->format('Y-m-d H:i:s') }}
             </p>
@@ -26,7 +26,7 @@
 
     <div class="flex items-center gap-2">
         {{-- Refresh --}}
-        <form method="POST" action="{{ route('dashboard.product-cache.refresh', $cacheRecord->odoo_id) }}">
+        <form method="POST" action="{{ route('dashboard.product-cache.refresh', $cacheRecord->erp_id ?? $cacheRecord->odoo_id) }}">
             @csrf
             <button type="submit"
                     class="text-sm border border-gray-300 text-gray-600 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition flex items-center gap-1.5">
@@ -34,24 +34,24 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                           d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                 </svg>
-                Re-fetch from Odoo
+                Re-fetch from {{ $erpDisplayName }}
             </button>
         </form>
 
-        {{-- Post Shopify --}}
-        <form method="POST" action="{{ route('dashboard.product-cache.post-shopify') }}">
+        {{-- Post to Ecom --}}
+        <form method="POST" action="{{ route('dashboard.product-cache.post-ecom') }}">
             @csrf
-            <input type="hidden" name="ids[]" value="{{ $cacheRecord->odoo_id }}">
+            <input type="hidden" name="ids[]" value="{{ $cacheRecord->erp_id ?? $cacheRecord->odoo_id }}">
             <button type="submit"
                     class="text-sm bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition flex items-center gap-1.5">
-                Post Shopify
+                Post to {{ $ecomDisplayName }}
             </button>
         </form>
 
         {{-- Post Amazon --}}
         <form method="POST" action="{{ route('dashboard.product-cache.post-amazon') }}">
             @csrf
-            <input type="hidden" name="ids[]" value="{{ $cacheRecord->odoo_id }}">
+            <input type="hidden" name="ids[]" value="{{ $cacheRecord->erp_id ?? $cacheRecord->odoo_id }}">
             <button type="submit"
                     class="text-sm bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg transition flex items-center gap-1.5">
                 Post Amazon
@@ -69,15 +69,15 @@
             </svg>
         </div>
         <div>
-            <div class="text-xs text-gray-500">Shopify Status</div>
-            <span class="badge {{ $cacheRecord->statusBadgeClass('shopify') }} mt-0.5">
-                {{ ucfirst($cacheRecord->shopify_status) }}
+            <div class="text-xs text-gray-500">{{ $ecomDisplayName }} Status</div>
+            <span class="badge {{ $cacheRecord->statusBadgeClass('ecom') }} mt-0.5">
+                {{ ucfirst($cacheRecord->ecom_status ?? $cacheRecord->shopify_status) }}
             </span>
-            @if($cacheRecord->shopify_synced_at)
-            <div class="text-xs text-gray-400 mt-0.5">{{ $cacheRecord->shopify_synced_at->format('Y-m-d H:i') }}</div>
+            @if($cacheRecord->ecom_synced_at ?? $cacheRecord->shopify_synced_at)
+            <div class="text-xs text-gray-400 mt-0.5">{{ $cacheRecord->ecom_synced_at ?? $cacheRecord->shopify_synced_at->format('Y-m-d H:i') }}</div>
             @endif
-            @if($cacheRecord->shopify_message)
-            <div class="text-xs text-red-500 mt-0.5">{{ $cacheRecord->shopify_message }}</div>
+            @if($cacheRecord->ecom_message ?? $cacheRecord->shopify_message)
+            <div class="text-xs text-red-500 mt-0.5">{{ $cacheRecord->ecom_message ?? $cacheRecord->shopify_message }}</div>
             @endif
         </div>
     </div>
@@ -103,14 +103,14 @@
     </div>
 </div>
 
-{{-- ── Raw Odoo Data ── --}}
+{{-- ── Raw {{ $erpDisplayName }} Data ── --}}
 @if($data)
 <div class="space-y-4">
 
     {{-- Template --}}
     <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div class="bg-gray-50 border-b border-gray-200 px-4 py-2.5 flex items-center justify-between">
-            <h3 class="text-sm font-semibold text-gray-700">Product Template (Odoo)</h3>
+            <h3 class="text-sm font-semibold text-gray-700">Product Template ({{ $erpDisplayName }})</h3>
             <span class="text-xs text-gray-400">product.template</span>
         </div>
         <div class="p-4">
@@ -210,10 +210,10 @@
 @else
 <div class="bg-yellow-50 border border-yellow-200 rounded-xl p-6 text-center">
     <p class="text-sm text-yellow-700">Cache file not found on disk.</p>
-    <form method="POST" action="{{ route('dashboard.product-cache.refresh', $cacheRecord->odoo_id) }}" class="mt-3">
+    <form method="POST" action="{{ route('dashboard.product-cache.refresh', $cacheRecord->erp_id ?? $cacheRecord->odoo_id) }}" class="mt-3">
         @csrf
         <button type="submit" class="text-sm bg-yellow-600 text-white px-4 py-1.5 rounded-lg hover:bg-yellow-700">
-            Re-fetch from Odoo
+            Re-fetch from {{ $erpDisplayName }}
         </button>
     </form>
 </div>

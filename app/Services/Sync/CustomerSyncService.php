@@ -2,143 +2,177 @@
 
 namespace App\Services\Sync;
 
-use App\Models\SyncLog;
-use App\Models\SyncMapping;
+use App\Models\ProductFieldConfig;
+use App\Services\ChannelMappingService;
+use App\Services\Ecom\EcomInterface;
 use App\Services\Erp\ErpInterface;
 use App\Services\MappingService;
-use App\Services\Shopify\ShopifyCustomerService;
+use App\Services\SettingsService;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * CustomerSyncService - Orchestrates customer sync using UniversalSyncService
+ */
 class CustomerSyncService
 {
     public function __construct(
-        private readonly ErpInterface           $erp,              // ← was OdooCustomerService
-        private readonly ShopifyCustomerService $shopifyCustomers,
+        private readonly ErpInterface           $erp,
+        private readonly EcomInterface          $ecom,
+        private readonly UniversalSyncService   $universalSync,
         private readonly MappingService         $mappings,
+        private readonly ChannelMappingService  $channelMappings,
+        private readonly SettingsService        $settings,
     ) {}
 
-    /**
-     * Sync a single customer (detects direction automatically).
-     * If data has 'write_date' → ERP data (sync TO ecom)
-     * If data has Shopify structure → Ecom data (sync TO ERP)
-     */
-    public function syncCustomer(array $customerData): string
+    public function isEnabled(): bool
     {
-        // Detect direction based on data structure
-        $isFromErp = isset($customerData['write_date']) || isset($customerData['customer_rank']);
-        
-        if ($isFromErp) {
-            return $this->syncErpToEcom($customerData);
-        } else {
-            return $this->syncEcomToErp($customerData);
-        }
+        return $this->settings->get('customer_sync_enabled', false);
     }
 
     /**
-     * Sync ERP customer TO ecom platform
+     * Sync ERP customer to ecommerce
      */
-    private function syncErpToEcom(array $erpPartner): string
+    public function syncCustomerToEcom(array $erpCustomer): string
     {
-        $erpId   = (string) $erpPartner['id'];
-        $mapping = $this->mappings->findByErpId(SyncMapping::TYPE_CUSTOMER, $erpId);
+        if (!$this->isEnabled()) {
+            Log::info("CustomerSyncService: customer sync disabled");
+            return '';
+        }
 
-        $payload = $this->shopifyCustomers->buildPayload($erpPartner);
-
-        $log = SyncLog::create([
-            'direction'       => 'erp_to_ecom',
-            'entity_type'     => SyncMapping::TYPE_CUSTOMER,
-            'entity_id'       => $erpId,
-            'action'          => $mapping ? 'update' : 'create',
-            'status'          => SyncLog::STATUS_PROCESSING,
-            'request_payload' => json_encode($payload),
-        ]);
+        $erpId = (string) $erpCustomer['id'];
 
         try {
-            if ($mapping) {
-                $shopifyCustomer = $this->shopifyCustomers->update($mapping->ecom_id, $payload);
-            } else {
-                $email    = $erpPartner['email'] ?? '';
-                $existing = $email ? $this->shopifyCustomers->findByEmail($email) : null;
+            $result = $this->universalSync->syncFromErpToEcom(
+                entityType: 'customer',
+                erpData: $erpCustomer,
+                scope: null
+            );
 
-                if ($existing) {
-                    $shopifyCustomer = $this->shopifyCustomers->update((string) $existing['id'], $payload);
-                } else {
-                    $shopifyCustomer = $this->shopifyCustomers->create($payload);
-                }
-            }
-
-            $shopifyCustomerId = (string) $shopifyCustomer['id'];
-
-            $this->mappings->upsert(SyncMapping::TYPE_CUSTOMER, $erpId, $shopifyCustomerId, [
-                'last_synced_at' => now(),
-                'last_sync_direction' => 'erp_to_ecom',
-            ]);
-
-            $log->markSuccess(json_encode(['shopify_customer_id' => $shopifyCustomerId]));
-            Log::info("Customer synced: ERP #{$erpId} → Ecom #{$shopifyCustomerId} [{$this->erp->driverName()}]");
-
-            return $shopifyCustomerId;
+            $ecomId = $result['id'] ?? $result['ecom_id'] ?? null;
+            Log::info("CustomerSyncService: synced ERP customer #{$erpId} → ecommerce #{$ecomId}");
+            return (string) $ecomId;
         } catch (\Throwable $e) {
-            $log->markFailed($e->getMessage());
+            Log::error("CustomerSyncService: ERP→Ecom sync failed for #{$erpId}", [
+                'error' => $e->getMessage(),
+            ]);
             throw $e;
         }
     }
 
     /**
-     * Sync Ecom customer TO ERP
+     * Sync ecommerce customer to ERP
      */
-    private function syncEcomToErp(array $ecomCustomer): string
+    public function syncCustomerToErp(array $ecomCustomer): int
     {
-        $ecomId  = (string) $ecomCustomer['id'];
-        $mapping = $this->mappings->findByEcomId(SyncMapping::TYPE_CUSTOMER, $ecomId);
-
-        // Build ERP payload from ecom data
-        $erpPayload = [
-            'name'  => $ecomCustomer['name'] ?? 'Ecom Customer',
-            'email' => $ecomCustomer['email'] ?? '',
-            'phone' => $ecomCustomer['phone'] ?? '',
-        ];
-
-        $log = SyncLog::create([
-            'direction'       => 'ecom_to_erp',
-            'entity_type'     => SyncMapping::TYPE_CUSTOMER,
-            'entity_id'       => $ecomId,
-            'action'          => $mapping ? 'update' : 'create',
-            'status'          => SyncLog::STATUS_PROCESSING,
-            'request_payload' => json_encode($erpPayload),
-        ]);
+        if (!$this->isEnabled()) {
+            Log::info("CustomerSyncService: customer sync disabled");
+            return 0;
+        }
 
         try {
-            if ($mapping) {
-                // Update existing ERP customer
-                $this->erp->updateCustomer((int)$mapping->erp_id, $erpPayload);
-                $erpId = $mapping->erp_id;
-            } else {
-                // Check if customer exists by email
-                $email = $ecomCustomer['email'] ?? '';
-                $existing = $email ? $this->erp->findCustomerByEmail($email) : null;
+            $result = $this->universalSync->syncFromEcomToErp(
+                entityType: 'customer',
+                ecomData: $ecomCustomer,
+                scope: null
+            );
 
-                if ($existing) {
-                    $erpId = (string) $existing['id'];
-                    $this->erp->updateCustomer((int)$erpId, $erpPayload);
-                } else {
-                    // Create new customer in ERP
-                    $erpId = (string) $this->erp->createCustomer($erpPayload);
-                }
-            }
-
-            $this->mappings->upsert(SyncMapping::TYPE_CUSTOMER, $erpId, $ecomId, [
-                'last_synced_at' => now(),
-                'last_sync_direction' => 'ecom_to_erp',
-            ]);
-
-            $log->markSuccess(json_encode(['erp_customer_id' => $erpId]));
-            Log::info("Customer synced: Ecom #{$ecomId} → ERP #{$erpId} [{$this->erp->driverName()}]");
-
-            return $erpId;
+            $erpId = $result['id'] ?? $result['erp_id'] ?? null;
+            Log::info("CustomerSyncService: synced ecommerce customer → ERP #{$erpId}");
+            return (int) $erpId;
         } catch (\Throwable $e) {
-            $log->markFailed($e->getMessage());
+            Log::error("CustomerSyncService: Ecom→ERP sync failed", [
+                'error' => $e->getMessage(),
+            ]);
             throw $e;
         }
+    }
+
+    /**
+     * Sync customer addresses
+     */
+    public function syncAddresses(array $customer, string $direction = 'erp_to_ecom'): array
+    {
+        if (!$this->isEnabled()) {
+            return [];
+        }
+
+        $syncedAddresses = [];
+
+        foreach ($customer['addresses'] ?? [] as $address) {
+            try {
+                if ($direction === 'erp_to_ecom') {
+                    $result = $this->universalSync->syncFromErpToEcom(
+                        entityType: 'customer_address',
+                        erpData: $address,
+                        scope: null
+                    );
+                } else {
+                    $result = $this->universalSync->syncFromEcomToErp(
+                        entityType: 'customer_address',
+                        ecomData: $address,
+                        scope: null
+                    );
+                }
+
+                $syncedAddresses[] = $result;
+            } catch (\Throwable $e) {
+                Log::warning("CustomerSyncService: failed to sync address", [
+                    'error' => $e->getMessage(),
+                    'address_id' => $address['id'] ?? null,
+                ]);
+            }
+        }
+
+        return $syncedAddresses;
+    }
+
+    /**
+     * Sync batch of customers
+     */
+    public function syncBatch(array $customers, string $direction = 'erp_to_ecom'): array
+    {
+        if (!$this->isEnabled()) {
+            return [];
+        }
+
+        $results = [];
+
+        foreach ($customers as $customer) {
+            try {
+                if ($direction === 'erp_to_ecom') {
+                    $result = $this->syncCustomerToEcom($customer);
+                } else {
+                    $result = $this->syncCustomerToErp($customer);
+                }
+
+                $results[] = [
+                    'id' => $result,
+                    'customer_id' => $customer['id'] ?? null,
+                ];
+            } catch (\Throwable $e) {
+                Log::warning("CustomerSyncService: batch sync failed for customer", [
+                    'error' => $e->getMessage(),
+                    'customer_id' => $customer['id'] ?? null,
+                ]);
+            }
+        }
+
+        Log::info("CustomerSyncService: batch sync completed", [
+            'total' => count($customers),
+            'synced' => count($results),
+        ]);
+
+        return $results;
+    }
+
+    public function getFieldConfigs(string $entityType, string $ecomDriver, string $erpDriver)
+    {
+        return ProductFieldConfig::query()
+            ->where('entity_type', $entityType)
+            ->where('ecom_driver', $ecomDriver)
+            ->where('erp_driver', $erpDriver)
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->get();
     }
 }

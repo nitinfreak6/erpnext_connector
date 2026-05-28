@@ -16,7 +16,7 @@
             @forelse($logs as $log)
             <tr class="hover:bg-gray-50">
                 <td class="py-2">
-                    @if($log->direction === 'odoo_to_shopify')
+                    @if(in_array($log->direction, ['odoo_to_shopify','erp_to_ecom']))
                         <span class="badge bg-blue-100 text-blue-700">{{ $erpDisplayName }} → Out</span>
                     @else
                         <span class="badge bg-purple-100 text-purple-700">In → {{ $erpDisplayName }}</span>

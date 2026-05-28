@@ -6,27 +6,37 @@ use Illuminate\Database\Eloquent\Model;
 
 class ProductFieldConfig extends Model
 {
+    // Note: This model is named ProductFieldConfig for backwards compatibility
+    // but actually handles ALL entity types (products, orders, customers, etc.)
+    // Consider renaming to FieldConfig in future
+    
     protected $table = 'product_field_configs';
 
     protected $fillable = [
-        'channel',
-        'shopify_field',
-        'shopify_field_label',
-        'graphql_field',
-        'graphql_cast',
-        'field_type',
-        'odoo_field',
-        'odoo_field_label',
-        'scope',
+        'entity_type',          // product, sales_order, customer, inventory, dispatch
+        'ecom_driver',          // shopify, woocommerce, magento
+        'ecom_field',           // title, regular_price, order_number
+        'ecom_field_label',
+        'ecom_api_path',        // GraphQL: productCreate.product.title, REST: name
+        'ecom_cast',            // GraphQL: String!, REST: null
+        'field_type',           // default, custom, combine
+        'erp_driver',           // odoo, netsuite, sap
+        'erp_field',            // name, list_price, so_number
+        'erp_field_label',
+        'scope',                // template, variant, header, line, default
         'default_value',
-        'transform',
-        'reverse_transform',
+        'transform',            // ERP → Ecom transform
+        'reverse_transform',    // Ecom → ERP transform
         'min_length',
         'max_length',
         'is_active',
         'sort_order',
-        'graphql_field',
-        'graphql_cast',
+        
+        // DEPRECATED (backwards compatibility)
+        'odoo_field',
+        'odoo_field_label',
+        'odoo_field_2',
+        'combine_separator',
     ];
 
     protected $casts = [
@@ -68,9 +78,15 @@ class ProductFieldConfig extends Model
         return $query->where('is_active', true);
     }
 
-    public function scopeForChannel($query, string $channel)
+    public function scopeForDriverPair($query, string $ecomDriver, string $erpDriver)
     {
-        return $query->where('channel', $channel);
+        return $query->where('ecom_driver', $ecomDriver)
+                    ->where('erp_driver', $erpDriver);
+    }
+
+    public function scopeForEntity($query, string $entityType)
+    {
+        return $query->where('entity_type', $entityType);
     }
 
     public function scopeTemplateLevel($query)
@@ -82,6 +98,12 @@ class ProductFieldConfig extends Model
     {
         return $query->where('scope', 'variant');
     }
+    
+    // Relationships
+    public function entityDefinition()
+    {
+        return $this->belongsTo(EntityDefinition::class, 'entity_type', 'entity_type');
+    }
 
     // ── Auto-clear payload cache on ANY change ───────────────────────────
     // This fires on save/update/delete regardless of which controller triggered it.
@@ -89,10 +111,22 @@ class ProductFieldConfig extends Model
     protected static function booted(): void
     {
         $clear = function () {
+            // Clear all driver pair caches
+            \Illuminate\Support\Facades\Cache::flush(); // Or use tags if available
+            
+            // Legacy cache key
             \Illuminate\Support\Facades\Cache::forget('product_field_configs_shopify');
         };
 
         static::saved($clear);    // create + update
         static::deleted($clear);  // delete
+    }
+    
+    /**
+     * Get cache key for specific driver pair
+     */
+    public static function cacheKey(string $entityType, string $ecomDriver, string $erpDriver): string
+    {
+        return "field_configs_{$entityType}_{$ecomDriver}_{$erpDriver}";
     }
 }

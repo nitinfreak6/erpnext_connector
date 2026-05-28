@@ -3,67 +3,67 @@
 namespace App\Services\Sync;
 
 use App\Models\SyncLog;
-use App\Models\SyncMapping;
 use App\Services\Amazon\AmazonListingService;
+use App\Services\Erp\ErpInterface;
 use App\Services\MappingService;
-use App\Services\Odoo\OdooProductService;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * FIX #23: ErpInterface replaces OdooProductService — works with any ERP driver.
+ */
 class AmazonProductSyncService
 {
     const ENTITY_PRODUCT = 'amazon_product';
     const ENTITY_VARIANT = 'amazon_variant';
 
     public function __construct(
-        private readonly OdooProductService   $odooProducts,
+        private readonly ErpInterface       $erp,       // FIX: was OdooProductService
         private readonly AmazonListingService $amazonListings,
         private readonly MappingService       $mappings,
     ) {}
 
-    /**
-     * Sync a single Odoo product template to Amazon.
-     *
-     * Pass $cachedVariants and $cachedProductAttributes from the JSON cache
-     * to avoid calling Odoo again. If not provided, falls back to Odoo API.
-     */
     public function syncProduct(
-        array  $odooTemplate,
+        array  $erpTemplate,                // FIX: renamed from $odooTemplate
         ?array $cachedVariants           = null,
         ?array $cachedProductAttributes  = null,
     ): array {
-        $odooId = (string) $odooTemplate['id'];
+        $erpId  = (string) $erpTemplate['id'];  // FIX: renamed from $odooId
         $synced = [];
         $failed = [];
 
-        // ── Use cached data if provided, otherwise fall back to Odoo API ─
         if ($cachedVariants !== null) {
             $variants = $cachedVariants;
-            Log::debug("AmazonProductSyncService: using cached variants for #{$odooId} (no Odoo call)");
+            Log::debug("AmazonProductSyncService: using cached variants for #{$erpId}");
         } else {
-            $variants = $this->odooProducts->getVariantsForTemplates([$odooTemplate['id']]);
-            Log::debug("AmazonProductSyncService: fetched variants from Odoo for #{$odooId}");
+            // FIX: uses ErpInterface::getVariantsForProducts()
+            $variants = $this->erp->getVariantsForProducts([$erpTemplate['id']]);
+            Log::debug("AmazonProductSyncService: fetched variants from {$this->erp->driverName()} for #{$erpId}");
         }
 
         if (empty($variants)) {
-            Log::warning("Amazon: Odoo product #{$odooId} has no variants, skipping.");
+            Log::warning("Amazon: ERP product #{$erpId} has no variants, skipping.");
             return ['synced' => [], 'failed' => []];
         }
 
-        // Pre-fetch product attributes once (from cache or Odoo)
-        // Done outside the variant loop to avoid N Odoo calls
+        // FIX: uses ErpInterface::getAttributeValues()
         $productAttributes = $cachedProductAttributes
-            ?? $this->odooProducts->getProductAttributes((int) $odooTemplate['id']);
+            ?? $this->erp->getAttributeValues(
+                array_unique(array_merge(...array_map(
+                    fn($v) => $v['product_template_attribute_value_ids'] ?? [],
+                    $variants
+                )))
+            );
 
         foreach ($variants as $variant) {
             $sku = $variant['default_code'] ?? '';
 
             if (!$sku) {
-                Log::warning("Amazon: Odoo variant #{$variant['id']} has no SKU, skipping.");
+                Log::warning("Amazon: ERP variant #{$variant['id']} has no SKU, skipping.");
                 $failed[] = $variant['id'];
                 continue;
             }
 
-            $existingMapping = $this->mappings->findByOdooId(self::ENTITY_VARIANT, (string) $variant['id']);
+            $existingMapping = $this->mappings->findByErpId(self::ENTITY_VARIANT, (string) $variant['id']);
 
             $log = SyncLog::create([
                 'direction'   => 'erp_to_ecom',
@@ -74,11 +74,10 @@ class AmazonProductSyncService
             ]);
 
             try {
-                // Build listing attributes using cached product attributes — no Odoo call
                 $attributes = $this->amazonListings->buildListingAttributes(
-                    $odooTemplate,
+                    $erpTemplate,
                     $variant,
-                    $productAttributes   // ← from cache, not from Odoo
+                    $productAttributes
                 );
 
                 $result = $this->amazonListings->putListing($sku, $attributes);
@@ -90,18 +89,16 @@ class AmazonProductSyncService
                 }
 
                 $this->mappings->upsert(self::ENTITY_VARIANT, (string) $variant['id'], $sku, [
-                    'odoo_reference' => $sku,
+                    'erp_reference'  => $sku,
                     'last_synced_at' => now(),
                 ]);
 
-                $this->mappings->upsert(self::ENTITY_PRODUCT, $odooId, $odooId, [
+                $this->mappings->upsert(self::ENTITY_PRODUCT, $erpId, $erpId, [
                     'last_synced_at' => now(),
                 ]);
 
                 $log->markSuccess(json_encode(['sku' => $sku, 'status' => $status]));
-
                 Log::info("Amazon listing synced: SKU={$sku}, status={$status}");
-
                 $synced[] = $sku;
             } catch (\Throwable $e) {
                 $log->markFailed($e->getMessage());

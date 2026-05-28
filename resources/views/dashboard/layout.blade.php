@@ -321,9 +321,9 @@
                     <div x-show="open" x-cloak @click.outside="open = false"
                          class="absolute right-0 top-10 w-52 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1">
                         @foreach([
-                            'products' => 'Shopify Products',
-                            'inventory' => 'Shopify Inventory',
-                            'orders' => 'Shopify Orders',
+                            'products' => $ecomDisplayName . ' Products',
+                            'inventory' => $ecomDisplayName . ' Inventory',
+                            'orders' => $ecomDisplayName . ' Orders',
                             'customers' => 'Customers',
                             'amazon_products' => 'Amazon Products',
                             'amazon_orders' => 'Amazon Orders',

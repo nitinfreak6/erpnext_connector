@@ -3,7 +3,6 @@
 namespace App\Jobs\Erp;
 
 use App\Jobs\Amazon\PushProductToAmazonJob;
-use App\Jobs\Shopify\PushProductToShopifyJob;
 use App\Models\SyncQueueState;
 use App\Services\Erp\ErpInterface;
 use App\Services\ProductCacheService;
@@ -22,28 +21,24 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
 
     public int $uniqueFor = 600;
 
+    // FIX #15: removed $shopify and $amazon boolean params.
+    // Push destinations are resolved from the active driver settings at runtime.
     public function __construct(
         private readonly bool   $fullSync = false,
-        private readonly bool   $shopify  = true,
-        private readonly bool   $amazon   = true,
         private readonly ?array $erpIds   = null,
     ) {}
 
     public function handle(ErpInterface $erp, ProductCacheService $cache, SettingsService $settings): void
     {
-        // ── Master switch check ─────────────────────────────────────────
-        // Always honour the setting, even when the job is dispatched directly
-        // (e.g. from the manual sync button or another job).
-        if (! $settings->isProductSyncEnabled()) {
+        if (!$settings->isProductSyncEnabled()) {
             Log::info('FetchErpProductsJob: skipped — product sync is disabled in settings.');
             return;
         }
 
-        // ── Direction check ─────────────────────────────────────────────
         $mode = $settings->productSyncMode();
-        
+
         if ($mode === 'ecom_to_erp') {
-            Log::info("FetchErpProductsJob: skipped — sync mode is {$mode} (products should come from ecommerce, not ERP)");
+            Log::info("FetchErpProductsJob: skipped — sync mode is {$mode}.");
             return;
         }
 
@@ -60,14 +55,14 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
 
         try {
             if ($this->erpIds) {
-                $this->handleManual($this->erpIds, $cache);
+                $this->handleManual($this->erpIds, $cache, $settings);
                 return;
             }
 
             if ($this->fullSync) {
-                $this->handleFull($erp, $cache, $state);
+                $this->handleFull($erp, $cache, $state, $settings);
             } else {
-                $this->handleIncremental($erp, $cache, $state);
+                $this->handleIncremental($erp, $cache, $state, $settings);
             }
         } catch (\Throwable $e) {
             if (!$this->erpIds) {
@@ -77,11 +72,9 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
         }
     }
 
-    // ── Incremental ──────────────────────────────────────────────────────
-
-    private function handleIncremental(ErpInterface $erp, ProductCacheService $cache, SyncQueueState $state): void
+    private function handleIncremental(ErpInterface $erp, ProductCacheService $cache, SyncQueueState $state, SettingsService $settings): void
     {
-        $writeDate = $state->last_odoo_write_date ?? '2000-01-01 00:00:00';
+        $writeDate = $state->getErpWriteDate();
 
         Log::info("FetchErpProductsJob [{$erp->driverName()}]: incremental from {$writeDate}");
 
@@ -103,7 +96,7 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
                 Log::warning("FetchErpProductsJob: cache failed for #{$product['id']}: " . $e->getMessage());
             }
 
-            $this->dispatchPushJobs((int) $product['id']);
+            $this->dispatchPushJobs((int) $product['id'], $settings);
 
             if (($product['write_date'] ?? '') > $latestWriteDate) {
                 $latestWriteDate = $product['write_date'];
@@ -114,12 +107,10 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
 
         $state->markComplete($latestWriteDate);
 
-        Log::info("FetchErpProductsJob [{$erp->driverName()}]: incremental — {$dispatched} products cached, cursor → {$latestWriteDate}");
+        Log::info("FetchErpProductsJob [{$erp->driverName()}]: incremental — {$dispatched} products, cursor → {$latestWriteDate}");
     }
 
-    // ── Full sync ────────────────────────────────────────────────────────
-
-    private function handleFull(ErpInterface $erp, ProductCacheService $cache, SyncQueueState $state): void
+    private function handleFull(ErpInterface $erp, ProductCacheService $cache, SyncQueueState $state, SettingsService $settings): void
     {
         $pageSize        = config('sync.product_page_size', 100);
         $offset          = 0;
@@ -127,7 +118,7 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
         $dispatched      = 0;
         $latestWriteDate = '2000-01-01 00:00:00';
 
-        Log::info("FetchErpProductsJob [{$erp->driverName()}]: full sync started (page size: {$pageSize}).");
+        Log::info("FetchErpProductsJob [{$erp->driverName()}]: full sync started.");
 
         do {
             $products = $erp->getAllActiveProducts($offset, $pageSize);
@@ -144,7 +135,7 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
                     continue;
                 }
 
-                $this->dispatchPushJobs((int) $product['id']);
+                $this->dispatchPushJobs((int) $product['id'], $settings);
 
                 if (($product['write_date'] ?? '') > $latestWriteDate) {
                     $latestWriteDate = $product['write_date'];
@@ -155,19 +146,14 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
 
             $offset += count($products);
             $totalPages++;
-
-            Log::debug("FetchErpProductsJob: full sync page {$totalPages}, offset {$offset}, got " . count($products));
-
         } while (count($products) === $pageSize);
 
         $state->markComplete($latestWriteDate);
 
-        Log::info("FetchErpProductsJob [{$erp->driverName()}]: full sync done — {$dispatched} products across {$totalPages} pages.");
+        Log::info("FetchErpProductsJob [{$erp->driverName()}]: full sync done — {$dispatched} products.");
     }
 
-    // ── Manual (UI button) ───────────────────────────────────────────────
-
-    private function handleManual(array $erpIds, ProductCacheService $cache): void
+    private function handleManual(array $erpIds, ProductCacheService $cache, SettingsService $settings): void
     {
         foreach ($erpIds as $erpId) {
             $data = $cache->read((int) $erpId);
@@ -177,18 +163,32 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
                 $cache->fetchAndCacheSingle((int) $erpId);
             }
 
-            $this->dispatchPushJobs((int) $erpId);
+            $this->dispatchPushJobs((int) $erpId, $settings);
         }
 
         Log::info('FetchErpProductsJob: manual re-push dispatched for ' . count($erpIds) . ' product(s).');
     }
 
-    private function dispatchPushJobs(int $erpId): void
+    // FIX #15: Push destination resolved from active ecom driver — not hardcoded.
+    // Add new ecom drivers by adding one entry to the $ecomJobMap array.
+    private function dispatchPushJobs(int $erpId, SettingsService $settings): void
     {
-        if ($this->shopify) {
-            PushProductToShopifyJob::dispatchSync($erpId);
+        $ecomDriver = $settings->ecomDriver();
+
+        $ecomJobMap = [
+            'shopify'     => \App\Jobs\Shopify\PushProductToShopifyJob::class,
+            // 'woocommerce' => \App\Jobs\WooCommerce\PushProductToWooCommerceJob::class,
+            // 'magento'     => \App\Jobs\Magento\PushProductToMagentoJob::class,
+        ];
+
+        if (isset($ecomJobMap[$ecomDriver])) {
+            $ecomJobMap[$ecomDriver]::dispatchSync($erpId);
+        } else {
+            Log::warning("FetchErpProductsJob: no push job registered for ecom driver [{$ecomDriver}].");
         }
-        if ($this->amazon) {
+
+        // Amazon is a secondary channel — conditional on its own enable flag
+        if ($settings->isAmazonChannelEnabled()) {
             PushProductToAmazonJob::dispatchSync($erpId);
         }
     }

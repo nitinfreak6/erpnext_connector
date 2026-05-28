@@ -2,10 +2,11 @@
 
 namespace App\Jobs\Erp;
 
+use App\Jobs\Ecom\PushInventoryToEcomJob;
 use App\Jobs\Amazon\PushInventoryToAmazonJob;
-use App\Jobs\Shopify\PushInventoryToShopifyJob;
 use App\Models\SyncQueueState;
 use App\Services\Erp\ErpInterface;
+use App\Services\SettingsService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -14,32 +15,39 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
-/**
- * FetchErpInventoryJob
- *
- * Replaces FetchOdooInventoryJob. Uses ErpInterface so it works with any ERP.
- */
 class FetchErpInventoryJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $uniqueFor = 300; // 5 min lock
+    public int $uniqueFor = 300;
 
     public function __construct(private readonly ?int $locationId = null)
     {
         $this->onQueue('sync');
     }
 
-    public function handle(ErpInterface $erp): void
+    public function handle(ErpInterface $erp, SettingsService $settings): void
     {
-        $state = SyncQueueState::forType('inventory');
+        // FIX #13: check enable flag
+        if (!$settings->isInventorySyncEnabled()) {
+            Log::info('FetchErpInventoryJob: skipped — inventory sync is disabled in settings.');
+            return;
+        }
 
-        // Self-healing stale lock
+        $syncMode = $settings->inventorySyncMode();
+
+        if ($syncMode === 'ecom_to_erp') {
+            Log::info('FetchErpInventoryJob: skipped — mode is ecom_to_erp.');
+            return;
+        }
+
+        $state             = SyncQueueState::forType('inventory');
         $staleAfterMinutes = 15;
+
         if ($state->is_running) {
             $startedAt = $state->run_started_at;
             if ($startedAt && $startedAt->diffInMinutes(now()) >= $staleAfterMinutes) {
-                Log::warning('FetchErpInventoryJob: stale running flag detected, resetting.');
+                Log::warning('FetchErpInventoryJob: stale lock, resetting.');
                 $state->update(['is_running' => false, 'run_started_at' => null]);
             } else {
                 Log::warning('FetchErpInventoryJob: previous run still active, skipping.');
@@ -50,15 +58,20 @@ class FetchErpInventoryJob implements ShouldQueue, ShouldBeUnique
         $state->markRunning();
 
         try {
-            $writeDate = $state->last_odoo_write_date ?? '2000-01-01 00:00:00';
+            // FIX: use getErpWriteDate() — reads last_erp_write_date
+            $writeDate = $state->getErpWriteDate();
 
-            $quants = $erp->getInventoryModifiedSince($writeDate, $this->locationId);
-
+            $quants          = $erp->getInventoryModifiedSince($writeDate, $this->locationId);
             $latestWriteDate = $writeDate;
 
             foreach ($quants as $quant) {
-                PushInventoryToShopifyJob::dispatch($quant);
-                PushInventoryToAmazonJob::dispatch($quant);
+                // FIX #17: dispatch to generic ecom job — not hardcoded Shopify
+                PushInventoryToEcomJob::dispatch($quant);
+
+                // Amazon is a secondary channel, stays conditional
+                if ($settings->isAmazonChannelEnabled()) {
+                    PushInventoryToAmazonJob::dispatch($quant);
+                }
 
                 if ($quant['write_date'] > $latestWriteDate) {
                     $latestWriteDate = $quant['write_date'];

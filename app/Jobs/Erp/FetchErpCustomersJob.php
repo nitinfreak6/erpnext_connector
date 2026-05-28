@@ -5,6 +5,7 @@ namespace App\Jobs\Erp;
 use App\Jobs\Ecom\PushCustomerToEcomJob;
 use App\Models\SyncQueueState;
 use App\Services\Erp\ErpInterface;
+use App\Services\SettingsService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -13,11 +14,6 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
-/**
- * FetchErpCustomersJob
- *
- * Replaces FetchOdooCustomersJob. Uses ErpInterface so it works with any ERP.
- */
 class FetchErpCustomersJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
@@ -29,8 +25,21 @@ class FetchErpCustomersJob implements ShouldQueue, ShouldBeUnique
         $this->onQueue('sync');
     }
 
-    public function handle(ErpInterface $erp): void
+    public function handle(ErpInterface $erp, SettingsService $settings): void
     {
+        // FIX #13: check enable flag
+        if (!$settings->isCustomerSyncEnabled()) {
+            Log::info('FetchErpCustomersJob: skipped — customer sync is disabled in settings.');
+            return;
+        }
+
+        $syncMode = $settings->customerSyncMode();
+
+        if ($syncMode === 'ecom_to_erp') {
+            Log::info('FetchErpCustomersJob: skipped — mode is ecom_to_erp.');
+            return;
+        }
+
         $state = SyncQueueState::forType('customers');
 
         if ($state->is_running) {
@@ -41,10 +50,10 @@ class FetchErpCustomersJob implements ShouldQueue, ShouldBeUnique
         $state->markRunning();
 
         try {
-            $writeDate = $state->last_odoo_write_date ?? '2000-01-01 00:00:00';
+            // FIX: use getErpWriteDate() — reads last_erp_write_date
+            $writeDate = $state->getErpWriteDate();
 
-            $customers = $erp->getCustomersModifiedSince($writeDate);
-
+            $customers       = $erp->getCustomersModifiedSince($writeDate);
             $latestWriteDate = $writeDate;
 
             foreach ($customers as $customer) {

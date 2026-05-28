@@ -25,9 +25,9 @@
             <h3 class="text-sm font-semibold text-gray-700">Sync Direction</h3>
             <p class="text-xs text-gray-500 mt-0.5">
                 @if($syncMode === 'erp_to_ecom')
-                    Products managed in <strong>Odoo</strong>, synced to <strong>{{ ucfirst($ecomDriver) }}</strong>
+                    Products managed in <strong>{{ $erpDisplayName }}</strong>, synced to <strong>{{ $ecomDisplayName }}</strong>
                 @elseif($syncMode === 'ecom_to_erp')
-                    Products managed in <strong>{{ ucfirst($ecomDriver) }}</strong>, synced to <strong>Odoo</strong>
+                    Products managed in <strong>{{ $ecomDisplayName }}</strong>, synced to <strong>{{ $erpDisplayName }}</strong>
                 @else
                     Products managed in <strong>both systems</strong>
                 @endif
@@ -35,9 +35,9 @@
         </div>
         <div class="flex items-center gap-2">
             @if($syncMode === 'erp_to_ecom')
-                <span class="px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium">Odoo → {{ ucfirst($ecomDriver) }}</span>
+                <span class="px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium">{{ $erpDisplayName }} → {{ $ecomDisplayName }}</span>
             @elseif($syncMode === 'ecom_to_erp')
-                <span class="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium">{{ ucfirst($ecomDriver) }} → Odoo</span>
+                <span class="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium">{{ $ecomDisplayName }} → {{ $erpDisplayName }}</span>
             @else
                 <span class="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-xs font-medium">⟷ Bidirectional</span>
             @endif
@@ -52,7 +52,7 @@
         <nav class="-mb-px flex space-x-8">
             <a href="?direction=erp_to_ecom&search={{ $search }}&status={{ $status }}"
                class="py-3 px-1 border-b-2 font-medium text-sm {{ ($direction ?? 'erp_to_ecom') === 'erp_to_ecom' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' }}">
-                Odoo Products
+                {{ $erpDisplayName }} Products
                 @if(isset($stats['erp_to_ecom']))
                     <span class="ml-2 py-0.5 px-2 rounded-full text-xs {{ ($direction ?? 'erp_to_ecom') === 'erp_to_ecom' ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600' }}">
                         {{ $stats['erp_to_ecom']['total'] ?? 0 }}
@@ -156,12 +156,12 @@
     <form method="POST" action="{{ route('dashboard.products.fetch') }}">
         @csrf
         <button type="submit"
-                onclick="return confirm('Fetch ALL products from Odoo now?')"
+                onclick="return confirm('Fetch ALL products from {{ $erpDisplayName }} now?')"
                 class="inline-flex items-center gap-1.5 bg-indigo-700 hover:bg-indigo-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
             </svg>
-            Fetch from Odoo
+            Fetch from {{ $erpDisplayName }}
         </button>
     </form>
     @endif
@@ -191,7 +191,7 @@
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4 4m0 0l4-4m-4 4V4"/>
             </svg>
-            Push to {{ ucfirst($ecomDriver) }}
+            Push to {{ $ecomDisplayName }}
         </button>
     </form>
     @endif
@@ -206,17 +206,17 @@
                 <tr>
                     @if($syncMode === 'erp_to_ecom' || ($syncMode === 'bidirectional' && ($direction ?? 'erp_to_ecom') === 'erp_to_ecom'))
                         {{-- ERP → Ecom columns --}}
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Odoo ID</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{{ $erpDisplayName }} ID</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Product Name</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">SKU</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{{ ucfirst($ecomDriver) }} ID</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{{ $ecomDisplayName }} ID</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Last Synced</th>
                     @else
                         {{-- Ecom → ERP columns --}}
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{{ ucfirst($ecomDriver) }} ID</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Handle</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Odoo ID</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{{ $erpDisplayName }} ID</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Last Synced</th>
                     @endif
@@ -229,29 +229,29 @@
                     
                     @if($syncMode === 'erp_to_ecom' || ($syncMode === 'bidirectional' && ($direction ?? 'erp_to_ecom') === 'erp_to_ecom'))
                         {{-- ERP → Ecom data --}}
-                        <td class="px-4 py-3 text-gray-700 font-medium">#{{ $product->odoo_id }}</td>
+                        <td class="px-4 py-3 text-gray-700 font-medium">#{{ $product->erp_id ?? $product->odoo_id }}</td>
                         <td class="px-4 py-3">
                             <div class="text-gray-900 font-medium">{{ Str::limit($product->name ?? '—', 40) }}</div>
                         </td>
                         <td class="px-4 py-3 text-gray-600 font-mono text-xs">{{ $product->default_code ?? '—' }}</td>
                         <td class="px-4 py-3 text-gray-600">
-                            @if($product->shopify_product_id)
-                                <span class="font-mono text-xs">{{ $product->shopify_product_id }}</span>
+                            @if($product->ecom_product_id)
+                                <span class="font-mono text-xs">{{ $product->ecom_product_id }}</span>
                             @else
                                 <span class="text-gray-400">—</span>
                             @endif
                         </td>
                         <td class="px-4 py-3">
-                            @if($product->shopify_status === 'sent')
+                            @if($product->ecom_status === 'sent')
                                 <span class="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-md text-xs font-medium">✓ Sent</span>
-                            @elseif($product->shopify_status === 'failed')
+                            @elseif($product->ecom_status === 'failed')
                                 <span class="px-2 py-1 bg-red-100 text-red-700 rounded-md text-xs font-medium">✗ Failed</span>
                             @else
                                 <span class="px-2 py-1 bg-gray-100 text-gray-600 rounded-md text-xs font-medium">⏳ Pending</span>
                             @endif
                         </td>
                         <td class="px-4 py-3 text-gray-500 text-xs">
-                            {{ $product->shopify_synced_at ? $product->shopify_synced_at->diffForHumans() : '—' }}
+                            {{ $product->ecom_synced_at ? $product->ecom_synced_at->diffForHumans() : '—' }}
                         </td>
                         
                     @else
@@ -313,15 +313,15 @@
                                      class="absolute right-0 z-30 mt-1 w-52 bg-white border border-gray-200 rounded-xl shadow-xl py-1.5">
 
                                     {{-- Fetch from Odoo --}}
-                                    <div class="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">Odoo</div>
-                                    <form method="POST" action="{{ route('dashboard.products.fetch-single', $product->odoo_id) }}">
+                                    <div class="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">{{ $erpDisplayName }}</div>
+                                    <form method="POST" action="{{ route('dashboard.products.fetch-single', $product->erp_id ?? $product->odoo_id) }}">
                                         @csrf
                                         <button type="submit"
                                                 class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 transition">
                                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
                                             </svg>
-                                            Fetch from Odoo
+                                            Fetch from {{ $erpDisplayName }}
                                         </button>
                                     </form>
 
@@ -329,7 +329,7 @@
                                     <div class="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">Push</div>
 
                                     {{-- Post to Shopify --}}
-                                    <form method="POST" action="{{ route('dashboard.products.post-single', $product->odoo_id) }}">
+                                    <form method="POST" action="{{ route('dashboard.products.post-single', $product->erp_id ?? $product->odoo_id) }}">
                                         @csrf
                                         <button type="submit"
                                                 class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition">
@@ -341,15 +341,15 @@
                                     </form>
 
                                     {{-- View on Shopify --}}
-                                    @if($product->shopify_product_id)
+                                    @if($product->ecom_product_id)
                                     <div class="border-t border-gray-100 my-1"></div>
-                                    <a href="https://admin.shopify.com/store/{{ str_replace('.myshopify.com', '', $shopifyStore) }}/products/{{ $product->shopify_product_id }}"
+                                    <a href="https://admin.shopify.com/store/{{ str_replace('.myshopify.com', '', $shopifyStore) }}/products/{{ $product->ecom_product_id }}"
                                        target="_blank"
                                        class="w-full text-left px-4 py-2 text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 flex items-center gap-2 transition">
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
                                         </svg>
-                                        View on {{ ucfirst($ecomDriver) }} ↗
+                                        View on {{ $ecomDisplayName }} ↗
                                     </a>
                                     @endif
                                 </div>
@@ -367,7 +367,7 @@
                         <p class="text-sm text-gray-400 font-medium">No products found</p>
                         <p class="text-xs text-gray-300 mt-1">
                             @if($syncMode === 'erp_to_ecom')
-                                Click <strong>Fetch from Odoo</strong> to import products
+                                Click <strong>Fetch from {{ $erpDisplayName }}</strong> to import products
                             @elseif($syncMode === 'ecom_to_erp')
                                 Click <strong>Pull from {{ ucfirst($ecomDriver) }}</strong> to import products
                             @else

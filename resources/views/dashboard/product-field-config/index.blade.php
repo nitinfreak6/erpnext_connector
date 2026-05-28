@@ -23,35 +23,35 @@
 <div class="flex items-center justify-between mb-5">
     <div class="text-xs text-gray-400 space-y-0.5">
         <div>
-            Shopify fields:
-            @if($shopifyFetchedAt)
-                <span class="text-emerald-600">fetched {{ \Carbon\Carbon::parse($shopifyFetchedAt)->diffForHumans() }}</span>
+            {{ $ecomDisplayName }} fields:
+            @if($ecomFetchedAt)
+                <span class="text-emerald-600">fetched {{ \Carbon\Carbon::parse($ecomFetchedAt)->diffForHumans() }}</span>
             @else
-                <span class="text-amber-500">not fetched yet — click Fetch Shopify Fields</span>
+                <span class="text-amber-500">not fetched yet — click Fetch {{ $ecomDisplayName }} Fields</span>
             @endif
         </div>
         <div>
-            Odoo fields:
-            @if($odooFetchedAt)
-                <span class="text-emerald-600">fetched {{ \Carbon\Carbon::parse($odooFetchedAt)->diffForHumans() }}</span>
+            {{ $erpDisplayName }} fields:
+            @if($erpFetchedAt)
+                <span class="text-emerald-600">fetched {{ \Carbon\Carbon::parse($erpFetchedAt)->diffForHumans() }}</span>
             @else
-                <span class="text-amber-500">not fetched yet — click Fetch Odoo Fields</span>
+                <span class="text-amber-500">not fetched yet — click Fetch {{ $erpDisplayName }} Fields</span>
             @endif
         </div>
     </div>
     <div class="flex items-center gap-2">
-        <form method="POST" action="{{ route('dashboard.product-field-config.fetch-shopify') }}">
+        <form method="POST" action="{{ route('dashboard.product-field-config.fetch-ecom-fields') }}">
             @csrf
             <button type="submit" class="inline-flex items-center gap-1.5 text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                Fetch Shopify Fields
+                Fetch {{ $ecomDisplayName }} Fields
             </button>
         </form>
-        <form method="POST" action="{{ route('dashboard.product-field-config.fetch-odoo') }}">
+        <form method="POST" action="{{ route('dashboard.product-field-config.fetch-erp-fields') }}">
             @csrf
             <button type="submit" class="inline-flex items-center gap-1.5 text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                Fetch Odoo Fields
+                Fetch {{ $erpDisplayName }} Fields
             </button>
         </form>
         <button @click="openAdd()" class="inline-flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg transition">
@@ -67,9 +67,9 @@
         <thead class="bg-gray-50 border-b border-gray-200">
             <tr>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">#</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Shopify Field</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Ecommerce Field</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Field Type</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Odoo Field / Value</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{{ $erpDisplayName }} Field / Value</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Level</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Transform</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Default Value</th>
@@ -82,11 +82,13 @@
             <tr class="hover:bg-gray-50 transition {{ $config->is_active ? '' : 'opacity-40' }}">
                 <td class="px-4 py-3 text-xs text-gray-400">{{ $config->sort_order ?: $loop->iteration }}</td>
 
-                {{-- Shopify Field --}}
+                {{-- Ecommerce Field (was Shopify Field) --}}
                 <td class="px-4 py-3">
-                    <div class="font-mono text-xs text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded inline-block">{{ $config->shopify_field }}</div>
-                    @if($config->shopify_field_label)
-                        <div class="text-xs text-gray-400 mt-0.5">{{ $config->shopify_field_label }}</div>
+                    <div class="font-mono text-xs text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded inline-block">
+                        {{ $config->ecom_field ?? $config->shopify_field ?? '—' }}
+                    </div>
+                    @if($config->ecom_field_label ?? $config->shopify_field_label)
+                        <div class="text-xs text-gray-400 mt-0.5">{{ $config->ecom_field_label ?? $config->shopify_field_label }}</div>
                     @endif
                 </td>
 
@@ -101,18 +103,18 @@
                     @endif
                 </td>
 
-                {{-- Odoo Field / Value --}}
+                {{-- ERP Field / Value --}}
                 <td class="px-4 py-3">
-                    @if($config->field_type === 'default' && $config->odoo_field)
-                        <div class="font-mono text-xs text-gray-700 bg-gray-100 px-2 py-0.5 rounded inline-block">{{ $config->odoo_field }}</div>
-                        @if($config->odoo_field_label)
-                            <div class="text-xs text-gray-400 mt-0.5">{{ $config->odoo_field_label }}</div>
+                    @if($config->field_type === 'default' && ($config->erp_field ?? $config->odoo_field))
+                        <div class="font-mono text-xs text-gray-700 bg-gray-100 px-2 py-0.5 rounded inline-block">{{ $config->erp_field ?? $config->odoo_field }}</div>
+                        @if($config->erp_field_label ?? $config->odoo_field_label)
+                            <div class="text-xs text-gray-400 mt-0.5">{{ $config->erp_field_label ?? $config->odoo_field_label }}</div>
                         @endif
                     @elseif($config->field_type === 'combine')
                         <div class="text-xs space-y-0.5">
-                            <span class="font-mono text-gray-700 bg-gray-100 px-1.5 py-0.5 rounded inline-block">{{ $config->odoo_field }}</span>
+                            <span class="font-mono text-gray-700 bg-gray-100 px-1.5 py-0.5 rounded inline-block">{{ $config->erp_field ?? $config->odoo_field }}</span>
                             <span class="text-gray-400 font-mono mx-1">{{ $config->combine_separator ?? ' ' }}</span>
-                            <span class="font-mono text-gray-700 bg-gray-100 px-1.5 py-0.5 rounded inline-block">{{ $config->odoo_field_2 }}</span>
+                            <span class="font-mono text-gray-700 bg-gray-100 px-1.5 py-0.5 rounded inline-block">{{ $config->erp_field_2 ?? $config->odoo_field_2 }}</span>
                         </div>
                     @elseif($config->field_type === 'custom')
                         <span class="text-xs text-purple-600 font-mono bg-purple-50 px-1.5 py-0.5 rounded">{{ $config->default_value ?: '—' }}</span>
@@ -207,31 +209,31 @@
 			<input type="hidden" name="_method" x-ref="method" value="POST">
             
             
-            <input type="hidden" name="channel" value="shopify">
+            <input type="hidden" name="ecom_driver" value="{{ $ecomDriver }}">
 
-            {{-- Shopify Field — dropdown from JSON (GraphQL keys) --}}
+            {{-- Ecommerce Field (was Shopify Field) — dropdown from JSON (GraphQL keys) --}}
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">
-                    Shopify Field <span class="text-red-500">*</span>
+                    Ecommerce Field <span class="text-red-500">*</span>
                 </label>
-                <select name="shopify_field" x-model="form.shopify_field"
-                        @change="onShopifyFieldChange()"
+                <select name="ecom_field" x-model="form.ecom_field"
+                        @change="onEcomFieldChange()"
                         class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none">
-                    <option value="">— Select a Shopify field —</option>
+                    <option value="">— Select an ecommerce field —</option>
                     <optgroup label="Template Fields">
-                        <template x-for="f in shopifyTemplateFields" :key="f.key">
-                            <option :value="f.key" :selected="form.shopify_field === f.key"
+                        <template x-for="f in ecomTemplateFields" :key="f.key">
+                            <option :value="f.key" :selected="form.ecom_field === f.key"
                                     x-text="f.label + ' (' + f.key + ')'"></option>
                         </template>
                     </optgroup>
                     <optgroup label="Variant Fields">
-                        <template x-for="f in shopifyVariantFields" :key="f.key">
-                            <option :value="f.key" :selected="form.shopify_field === f.key"
+                        <template x-for="f in ecomVariantFields" :key="f.key">
+                            <option :value="f.key" :selected="form.ecom_field === f.key"
                                     x-text="f.label + ' (' + f.key + ')'"></option>
                         </template>
                     </optgroup>
                 </select>
-                <input type="hidden" name="shopify_field_label" :value="form.shopify_field_label">
+                <input type="hidden" name="ecom_field_label" :value="form.ecom_field_label">
             </div>
 
             {{-- Scope --}}
@@ -251,47 +253,47 @@
                 </label>
                 <select name="field_type" x-model="form.field_type"
                         class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none">
-                    <option value="default">Default — map from single Odoo field</option>
-                    <option value="combine">Combine — merge two Odoo fields</option>
+                    <option value="default">Default — map from single {{ $erpDisplayName }} field</option>
+                    <option value="combine">Combine — merge two {{ $erpDisplayName }} fields</option>
                     <option value="custom">Custom — send a fixed value</option>
                 </select>
             </div>
 
             {{-- Hidden carriers for Alpine state --}}
-            <input type="hidden" name="odoo_field"         :value="form.odoo_field">
-            <input type="hidden" name="odoo_field_label"   :value="form.odoo_field_label">
-            <input type="hidden" name="odoo_field_2"       :value="form.odoo_field_2">
-            <input type="hidden" name="odoo_field_2_label" :value="form.odoo_field_2_label">
+            <input type="hidden" name="erp_field"         :value="form.erp_field">
+            <input type="hidden" name="erp_field_label"   :value="form.erp_field_label">
+            <input type="hidden" name="erp_field_2"       :value="form.erp_field_2">
+            <input type="hidden" name="erp_field_2_label" :value="form.erp_field_2_label">
             <input type="hidden" name="combine_separator"  :value="form.combine_separator">
             <input type="hidden" name="default_value"      :value="form.default_value">
 
-            {{-- Odoo Field 1 --}}
+            {{-- ERP Field 1 --}}
             <div x-show="form.field_type === 'default' || form.field_type === 'combine'">
                 <label class="block text-sm font-medium text-gray-700 mb-1">
-                    <span x-text="form.field_type === 'combine' ? 'Odoo Field 1' : 'Odoo Field'"></span>
+                    <span x-text="form.field_type === 'combine' ? 'ERP Field 1' : 'ERP Field'"></span>
                     <span class="text-red-500">*</span>
                 </label>
-                <select @change="onOdooFieldChange(); form.odoo_field = $event.target.value"
+                <select @change="onErpFieldChange(); form.erp_field = $event.target.value"
                         class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none">
-                    <option value="">— Select an Odoo field —</option>
-                    <template x-for="f in (form.scope === 'variant' ? odooVariantFields : odooTemplateFields)" :key="f.key">
-                        <option :value="f.key" :selected="form.odoo_field === f.key"
+                    <option value="">— Select an ERP field —</option>
+                    <template x-for="f in (form.scope === 'variant' ? erpVariantFields : erpTemplateFields)" :key="f.key">
+                        <option :value="f.key" :selected="form.erp_field === f.key"
                                 x-text="f.label + ' (' + f.key + ')'"></option>
                     </template>
                 </select>
             </div>
 
-            {{-- Odoo Field 2 + Separator --}}
+            {{-- ERP Field 2 + Separator --}}
             <div x-show="form.field_type === 'combine'" class="space-y-3">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">
-                        Odoo Field 2 <span class="text-red-500">*</span>
+                        ERP Field 2 <span class="text-red-500">*</span>
                     </label>
-                    <select @change="onOdooField2Change(); form.odoo_field_2 = $event.target.value"
+                    <select @change="onErpField2Change(); form.erp_field_2 = $event.target.value"
                             class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none">
-                        <option value="">— Select an Odoo field —</option>
-                        <template x-for="f in (form.scope === 'variant' ? odooVariantFields : odooTemplateFields)" :key="f.key">
-                            <option :value="f.key" :selected="form.odoo_field_2 === f.key"
+                        <option value="">— Select an ERP field —</option>
+                        <template x-for="f in (form.scope === 'variant' ? erpVariantFields : erpTemplateFields)" :key="f.key">
+                            <option :value="f.key" :selected="form.erp_field_2 === f.key"
                                     x-text="f.label + ' (' + f.key + ')'"></option>
                         </template>
                     </select>
@@ -316,7 +318,7 @@
             <div x-show="form.field_type === 'custom'">
                 <label class="block text-sm font-medium text-gray-700 mb-1">
                     Fixed Value <span class="text-red-500">*</span>
-                    <span class="text-xs text-gray-400 font-normal ml-1">— always sent as-is to Shopify</span>
+                    <span class="text-xs text-gray-400 font-normal ml-1">— always sent as-is to {{ $ecomDisplayName }}</span>
                 </label>
                 <input type="text" @input="form.default_value = $event.target.value"
                        :value="form.default_value"
@@ -328,7 +330,7 @@
             <div x-show="form.field_type === 'default' || form.field_type === 'combine'">
                 <label class="block text-sm font-medium text-gray-700 mb-1">
                     Default Value
-                    <span class="text-xs text-gray-400 font-normal ml-1">— fallback if Odoo value is empty</span>
+                    <span class="text-xs text-gray-400 font-normal ml-1">— fallback if {{ $erpDisplayName }} value is empty</span>
                 </label>
                 <input type="text" @input="form.default_value = $event.target.value"
                        :value="form.default_value"
@@ -346,7 +348,7 @@
                     <option value="number_format_nullable">Number Format or Null if 0</option>
                     <option value="boolean_status">Boolean → active / draft</option>
                     <option value="array_second">Array Second Value [id, name] → name</option>
-                    <option value="base64_image">Base64 → Shopify images array</option>
+                    <option value="base64_image">Base64 → {{ $ecomDisplayName }} images array</option>
                 </select>
             </div>
 
@@ -403,16 +405,16 @@ function fieldConfigApp() {
         showModal: false,
         editId: null,
 
-        shopifyTemplateFields: @json($shopifyFields['template_fields'] ?? []),
-        shopifyVariantFields:  @json($shopifyFields['variant_fields']  ?? []),
-        odooTemplateFields:    @json($odooFields['template_fields']    ?? []),
-        odooVariantFields:     @json($odooFields['variant_fields']     ?? []),
+        ecomTemplateFields: @json($shopifyFields['template_fields'] ?? []),
+        ecomVariantFields:  @json($shopifyFields['variant_fields']  ?? []),
+        erpTemplateFields:    @json($odooFields['template_fields']    ?? []),
+        erpVariantFields:     @json($odooFields['variant_fields']     ?? []),
 
         form: {
-            shopify_field: '', shopify_field_label: '',
+            ecom_field: '', ecom_field_label: '',
             field_type: 'default',
-            odoo_field: '', odoo_field_label: '',
-            odoo_field_2: '', odoo_field_2_label: '', combine_separator: ' ',
+            erp_field: '', erp_field_label: '',
+            erp_field_2: '', erp_field_2_label: '', combine_separator: ' ',
             scope: 'template', default_value: '', transform: '',
             min_length: '', max_length: '', sort_order: 0, is_active: true,
         },
@@ -423,10 +425,10 @@ function fieldConfigApp() {
 			this.editId = null;
 
 			this.form = {
-				shopify_field: '', shopify_field_label: '',
+				ecom_field: '', ecom_field_label: '',
 				field_type: 'default',
-				odoo_field: '', odoo_field_label: '',
-				odoo_field_2: '', odoo_field_2_label: '', combine_separator: ' ',
+				erp_field: '', erp_field_label: '',
+				erp_field_2: '', erp_field_2_label: '', combine_separator: ' ',
 				scope: 'template', default_value: '', transform: '',
 				min_length: '', max_length: '', sort_order: 0, is_active: true,
 			};
@@ -443,13 +445,13 @@ function fieldConfigApp() {
 			this.editId = config.id;
 
 			this.form = {
-				shopify_field:       config.shopify_field       || '',
-				shopify_field_label: config.shopify_field_label || '',
+				ecom_field:       config.ecom_field       || config.shopify_field || '',
+				ecom_field_label: config.ecom_field_label || config.shopify_field_label || '',
 				field_type:          config.field_type          || 'default',
-				odoo_field:          config.odoo_field          || '',
-				odoo_field_label:    config.odoo_field_label    || '',
-				odoo_field_2:        config.odoo_field_2        || '',
-				odoo_field_2_label:  config.odoo_field_2_label  || '',
+				erp_field:          config.erp_field          || config.odoo_field          || '',
+				erp_field_label:    config.erp_field_label    || config.odoo_field_label    || '',
+				erp_field_2:        config.erp_field_2        || config.odoo_field_2        || '',
+				erp_field_2_label:  config.erp_field_2_label  || config.odoo_field_2_label  || '',
 				combine_separator:   config.combine_separator   || ' ',
 				scope:               config.scope               || 'template',
 				default_value:       config.default_value       || '',
@@ -474,25 +476,25 @@ function fieldConfigApp() {
         },
 
         // Auto-set scope and label when Shopify field is selected
-        onShopifyFieldChange() {
-            const all = [...this.shopifyTemplateFields, ...this.shopifyVariantFields];
-            const found = all.find(f => f.key === this.form.shopify_field);
+        onEcomFieldChange() {
+            const all = [...this.ecomTemplateFields, ...this.ecomVariantFields];
+            const found = all.find(f => f.key === this.form.ecom_field);
             if (found) {
-                this.form.shopify_field_label = found.label;
+                this.form.ecom_field_label = found.label;
                 this.form.scope = found.scope || 'template';
             }
         },
 
-        onOdooFieldChange() {
-            const all = [...this.odooTemplateFields, ...this.odooVariantFields];
-            const found = all.find(f => f.key === this.form.odoo_field);
-            if (found) this.form.odoo_field_label = found.label;
+        onErpFieldChange() {
+            const all = [...this.erpTemplateFields, ...this.erpVariantFields];
+            const found = all.find(f => f.key === this.form.erp_field);
+            if (found) this.form.erp_field_label = found.label;
         },
 
-        onOdooField2Change() {
-            const all = [...this.odooTemplateFields, ...this.odooVariantFields];
-            const found = all.find(f => f.key === this.form.odoo_field_2);
-            if (found) this.form.odoo_field_2_label = found.label;
+        onErpField2Change() {
+            const all = [...this.erpTemplateFields, ...this.erpVariantFields];
+            const found = all.find(f => f.key === this.form.erp_field_2);
+            if (found) this.form.erp_field_2_label = found.label;
         },
     };
 }

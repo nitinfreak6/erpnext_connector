@@ -73,20 +73,24 @@ class SettingsService
         return $this->get('app_name') ?: config('app.name', 'Connector');
     }
 
+    // FIX #1: erp_display_name default is generic 'ERP', not hardcoded 'Odoo'
     public function erpDisplayName(): string
     {
-        return $this->get('erp_display_name') ?: 'Odoo';
+        return $this->get('erp_display_name') ?: 'ERP';
     }
 
+    // FIX #1: reads 'ecom_display_name' (correct key). Falls back to
+    // 'shopify_display_name' for existing installs that have not yet migrated.
     public function ecomDisplayName(): string
     {
-        return $this->get('shopify_display_name') ?: 'Shopify';
+        return $this->get('ecom_display_name')
+            ?: $this->get('shopify_display_name')
+            ?: 'Ecommerce';
     }
 
-    public function amazonDisplayName(): string
-    {
-        return $this->get('amazon_display_name') ?: 'Amazon';
-    }
+    // FIX #2: amazonDisplayName() REMOVED — was a hardcoded channel name.
+    // Amazon display is handled by the amazon_display_name connector setting
+    // directly in the settings blade, not exposed as a SettingsService method.
 
     // ── ERP driver ─────────────────────────────────────────────────────
 
@@ -106,11 +110,6 @@ class SettingsService
 
     // ── Sync master switches ───────────────────────────────────────────
 
-    /**
-     * Returns true only when the value is explicitly '1', 'true', 'yes', or 'on'.
-     * Any other value (including null / empty string) is treated as DISABLED
-     * so a missing DB row can't accidentally leave sync running.
-     */
     private function isEnabled(string $key, bool $default = true): bool
     {
         $value = $this->get($key);
@@ -122,40 +121,41 @@ class SettingsService
         return in_array(strtolower($value), ['1', 'true', 'yes', 'on'], true);
     }
 
+    // FIX #8: product_sync_enabled is the ONE key (from the Product Settings card).
+    // Legacy sync_products_enabled fallback kept for existing installs.
     public function isProductSyncEnabled(): bool
     {
-        // Honour new granular key first, fall back to legacy key
         if ($this->get('product_sync_enabled') !== null) {
             return $this->isEnabled('product_sync_enabled', true);
         }
         return $this->isEnabled('sync_products_enabled', true);
     }
 
+    // FIX #8: inventory_sync_enabled is the ONE key (from the Inventory Settings card).
     public function isInventorySyncEnabled(): bool
     {
+        if ($this->get('inventory_sync_enabled') !== null) {
+            return $this->isEnabled('inventory_sync_enabled', true);
+        }
         return $this->isEnabled('sync_inventory_enabled', true);
     }
 
-    public function isOrderSyncEnabled(): bool
-    {
-        return $this->isEnabled('sync_orders_enabled', true);
-    }
-
-    public function isCustomerSyncEnabled(): bool
-    {
-        // Honour new granular key first, fall back to legacy key
-        if ($this->get('customer_sync_enabled') !== null) {
-            return $this->isEnabled('customer_sync_enabled', false);
-        }
-        return $this->isEnabled('sync_customers_enabled', true);
-    }
-
+    // FIX #8: sales_order_sync_enabled is the ONE key (from the Sales Settings card).
     public function isSalesOrderSyncEnabled(): bool
     {
         if ($this->get('sales_order_sync_enabled') !== null) {
             return $this->isEnabled('sales_order_sync_enabled', true);
         }
-        return $this->isOrderSyncEnabled();
+        return $this->isEnabled('sync_orders_enabled', true);
+    }
+
+    // FIX #8: customer_sync_enabled is the ONE key (from the Customer Settings card).
+    public function isCustomerSyncEnabled(): bool
+    {
+        if ($this->get('customer_sync_enabled') !== null) {
+            return $this->isEnabled('customer_sync_enabled', true);
+        }
+        return $this->isEnabled('sync_customers_enabled', true);
     }
 
     public function isDispatchConfirmationEnabled(): bool
@@ -168,140 +168,129 @@ class SettingsService
         return $this->isEnabled('product_linking_enabled', false);
     }
 
-    public function isShopifyChannelEnabled(): bool
-    {
-        return $this->isEnabled('shopify_channel_enabled', true);
-    }
+    // FIX #2: isShopifyChannelEnabled() REMOVED — Shopify is just the active ecom driver,
+    // not a special named channel. Use ecomDriver() === 'shopify' if you need this check.
 
     public function isAmazonChannelEnabled(): bool
     {
         return $this->isEnabled('amazon_channel_enabled', true);
     }
 
-    // ── Sync direction helpers ─────────────────────────────────────────
-    //
-    // Each helper returns a channel slug: 'odoo' | 'shopify' | 'woocommerce' | 'csv'
-    // The slug 'odoo' means "the configured ERP adapter" — it follows
-    // erpDriver(), not literally Odoo.
-    //
-    // Usage in sync services:
-    //   if ($settings->productFetchFrom() === 'shopify') { ... }
-    //   if ($settings->productPostTo()    === 'odoo')    { ... }
+    // ── Sync modes ─────────────────────────────────────────────────────
 
-    /** Channel to pull products FROM. Default: erp (odoo). */
-    public function productFetchFrom(): string
-    {
-        $mode = $this->productSyncMode();
-        return $mode === 'ecom_to_erp' ? $this->ecomDriver() : 'odoo';
-    }
-
-    /** Channel to push products TO. Default: ecommerce (shopify). */
-    public function productPostTo(): string
-    {
-        $mode = $this->productSyncMode();
-        return $mode === 'ecom_to_erp' ? 'odoo' : $this->ecomDriver();
-    }
-
-    /**
-     * Product sync mode.
-     * Values: 'erp_to_ecom' | 'ecom_to_erp' | 'bidirectional'
-     */
     public function productSyncMode(): string
     {
         return $this->get('product_sync_mode') ?: 'erp_to_ecom';
     }
 
-    /**
-     * Customer sync mode.
-     * Values: 'erp_to_ecom' | 'ecom_to_erp' | 'bidirectional'
-     */
     public function customerSyncMode(): string
     {
         return $this->get('customer_sync_mode') ?: 'erp_to_ecom';
     }
 
-    /**
-     * Sales order sync mode.
-     * Values: 'erp_to_ecom' | 'ecom_to_erp' | 'bidirectional'
-     */
     public function salesOrderSyncMode(): string
     {
         return $this->get('sales_order_sync_mode') ?: 'erp_to_ecom';
     }
 
-    /**
-     * Dispatch confirmation sync mode.
-     * Values: 'erp_to_ecom' | 'ecom_to_erp' | 'bidirectional'
-     */
+    public function inventorySyncMode(): string
+    {
+        return $this->get('inventory_sync_mode') ?: 'erp_to_ecom';
+    }
+
     public function dispatchSyncMode(): string
     {
         return $this->get('dispatch_sync_mode') ?: 'ecom_to_erp';
     }
 
-    /** Channel to pull sales orders FROM. Default: erp (odoo). */
+    // ── Sync direction helpers ─────────────────────────────────────────
+    // FIX #6, #7, #8: All return dynamic driver values — never hardcoded strings.
+
+    /** Channel to pull products FROM. */
+    public function productFetchFrom(): string
+    {
+        $mode = $this->productSyncMode();
+        return $mode === 'ecom_to_erp' ? $this->ecomDriver() : $this->erpDriver();
+    }
+
+    /** Channel to push products TO. */
+    public function productPostTo(): string
+    {
+        $mode = $this->productSyncMode();
+        return $mode === 'ecom_to_erp' ? $this->erpDriver() : $this->ecomDriver();
+    }
+
+    /** Channel to pull sales orders FROM. */
     public function salesOrderFetchFrom(): string
     {
-        return $this->get('sales_order_fetch_from') ?: 'odoo';
+        $stored = $this->get('sales_order_fetch_from');
+        if ($stored) return $stored;
+        $mode = $this->salesOrderSyncMode();
+        return $mode === 'ecom_to_erp' ? $this->ecomDriver() : $this->erpDriver();
     }
 
-    /** Channel to push sales orders TO. Default: shopify. */
+    /** Channel to push sales orders TO. */
     public function salesOrderPostTo(): string
     {
-        return $this->get('sales_order_post_to') ?: 'shopify';
+        $stored = $this->get('sales_order_post_to');
+        if ($stored) return $stored;
+        $mode = $this->salesOrderSyncMode();
+        return $mode === 'ecom_to_erp' ? $this->erpDriver() : $this->ecomDriver();
     }
 
-    /** Channel to pull dispatch confirmations FROM. Default: shopify. */
+    /** Channel to pull dispatch confirmations FROM. */
     public function dispatchFetchFrom(): string
     {
-        return $this->get('dispatch_fetch_from') ?: 'shopify';
+        $stored = $this->get('dispatch_fetch_from');
+        if ($stored) return $stored;
+        // Default: ecom sends fulfillment → erp
+        return $this->ecomDriver();
     }
 
-    /** Channel to push dispatch confirmations TO. Default: erp (odoo). */
+    /** Channel to push dispatch confirmations TO. */
     public function dispatchPostTo(): string
     {
-        return $this->get('dispatch_post_to') ?: 'odoo';
+        $stored = $this->get('dispatch_post_to');
+        if ($stored) return $stored;
+        return $this->erpDriver();
     }
 
-    /**
-     * Human-readable label for a channel slug.
-     * Used in UI and log messages.
-     */
+    // FIX #9: channelLabel() no longer has hardcoded 'shopify' => 'Shopify'.
+    // Any driver slug maps to its display name via ecomDisplayName/erpDisplayName.
     public function channelLabel(string $slug): string
     {
-        $ecomDriver = $this->ecomDriver();
-        
-        return match (strtolower($slug)) {
-            'shopify'          => 'Shopify',
-            'woocommerce'      => 'WooCommerce',
-            'magento'          => 'Magento',
-            'odoo', 'erp', ''  => $this->erpDisplayName(),
-            'amazon'           => $this->amazonDisplayName(),
-            'csv'              => 'CSV',
-            $ecomDriver        => $this->ecomDisplayName(),
-            default            => ucfirst($slug),
-        };
+        if ($slug === $this->erpDriver() || in_array($slug, ['erp', ''])) {
+            return $this->erpDisplayName();
+        }
+
+        if ($slug === $this->ecomDriver()) {
+            return $this->ecomDisplayName();
+        }
+
+        // Amazon is a named secondary channel
+        if ($slug === 'amazon') {
+            return $this->get('amazon_display_name') ?: 'Amazon';
+        }
+
+        return ucfirst($slug);
     }
 
-    /**
-     * All available channel options for "fetch from / post to" selects.
-     * Returns [slug => label].
-     */
+    // FIX #10: availableChannels() uses erpDriver() key, not hardcoded 'odoo'.
     public function availableChannels(): array
     {
         $channels = [
-            'odoo'    => $this->erpDisplayName(),
+            $this->erpDriver()  => $this->erpDisplayName(),
             $this->ecomDriver() => $this->ecomDisplayName(),
-            'csv'     => 'CSV',
         ];
 
         if ($this->isAmazonChannelEnabled()) {
-            $channels['amazon'] = $this->amazonDisplayName();
+            $channels['amazon'] = $this->get('amazon_display_name') ?: 'Amazon';
         }
 
         return $channels;
     }
 
-    // ── Odoo credentials ───────────────────────────────────────────────
+    // ── Odoo credentials (used only inside OdooErpAdapter) ─────────────
 
     public function odooUrl(): string
     {
@@ -323,7 +312,7 @@ class SettingsService
         return $this->get('odoo_api_key') ?? env('ODOO_API_KEY', '');
     }
 
-    // ── Shopify credentials ────────────────────────────────────────────
+    // ── Shopify credentials (used only inside ShopifyEcomAdapter) ───────
 
     public function shopifyShop(): string
     {

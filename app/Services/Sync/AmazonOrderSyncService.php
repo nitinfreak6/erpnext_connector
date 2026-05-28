@@ -4,35 +4,34 @@ namespace App\Services\Sync;
 
 use App\Models\ChannelMapping;
 use App\Models\SyncLog;
-use App\Models\SyncMapping;
 use App\Services\Amazon\AmazonOrderService;
 use App\Services\ChannelMappingService;
+use App\Services\Erp\ErpInterface;
 use App\Services\MappingService;
-use App\Services\Odoo\OdooCustomerService;
-use App\Services\Odoo\OdooOrderService;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * FIX #22: ErpInterface replaces OdooOrderService + OdooCustomerService.
+ * Works with any ERP driver.
+ */
 class AmazonOrderSyncService
 {
     const ENTITY_ORDER = 'amazon_order';
 
     public function __construct(
         private readonly AmazonOrderService    $amazonOrders,
-        private readonly OdooOrderService      $odooOrders,
-        private readonly OdooCustomerService   $odooCustomers,
+        private readonly ErpInterface          $erp,           // FIX: was OdooOrderService + OdooCustomerService
         private readonly MappingService        $mappings,
         private readonly ChannelMappingService $channelMappings,
     ) {}
 
-    /**
-     * Create an Odoo sale.order from an Amazon order.
-     */
-    public function createInOdoo(array $amazonOrder, array $orderItems): int
+    // FIX: renamed from createInOdoo() to createInErp()
+    public function createInErp(array $amazonOrder, array $orderItems): int
     {
         $amazonOrderId = $amazonOrder['AmazonOrderId'];
 
         if ($this->mappings->findByShopifyId(self::ENTITY_ORDER, $amazonOrderId)) {
-            Log::info("Amazon order {$amazonOrderId} already in Odoo, skipping.");
+            Log::info("Amazon order {$amazonOrderId} already in {$this->erp->driverName()}, skipping.");
             return 0;
         }
 
@@ -49,7 +48,6 @@ class AmazonOrderSyncService
             $partnerId  = $this->resolveOrCreatePartner($amazonOrder);
             $orderLines = $this->buildOrderLines($orderItems);
 
-            // Shipping line
             $shippingPrice = (float) ($amazonOrder['OrderTotal']['Amount'] ?? 0)
                 - array_sum(array_map(fn($i) => (float) ($i['ItemPrice']['Amount'] ?? 0), $orderItems));
 
@@ -60,7 +58,6 @@ class AmazonOrderSyncService
                     'price_unit'      => round($shippingPrice, 2),
                 ]];
 
-                // ── Wire: Shipping mapping → Odoo delivery product ───────
                 $shippingProdId = $this->channelMappings->odooShippingProduct(
                     $amazonOrder['ShipServiceLevel'] ?? 'Amazon Shipping'
                 );
@@ -82,19 +79,16 @@ class AmazonOrderSyncService
                 'date_order'          => date('Y-m-d H:i:s', strtotime($amazonOrder['PurchaseDate'])),
             ];
 
-            // ── Wire: Sales Order Type mapping ───────────────────────────
             $orderTypeId = $this->channelMappings->odooAmazonSalesOrderType();
             if ($orderTypeId) {
                 $orderData['type_id'] = (int) $orderTypeId;
             }
 
-            // ── Wire: Sales Rep mapping ──────────────────────────────────
             $salesRepId = $this->channelMappings->odooAmazonSalesRep();
             if ($salesRepId) {
                 $orderData['user_id'] = (int) $salesRepId;
             }
 
-            // ── Wire: Pricelist mapping (by Amazon currency) ─────────────
             $currency    = $amazonOrder['OrderTotal']['CurrencyCode'] ?? '';
             $pricelistId = $currency
                 ? $this->channelMappings->odooPricelist($currency, ChannelMapping::CHANNEL_AMAZON)
@@ -103,40 +97,34 @@ class AmazonOrderSyncService
                 $orderData['pricelist_id'] = (int) $pricelistId;
             }
 
-            // ── Wire: Channel mapping → Odoo sales team ──────────────────
             $teamId = $this->channelMappings->resolve(
-                ChannelMapping::TYPE_CHANNEL,
-                ChannelMapping::CHANNEL_AMAZON,
-                'amazon'
+                ChannelMapping::TYPE_CHANNEL, ChannelMapping::CHANNEL_AMAZON, 'amazon'
             );
             if ($teamId) {
                 $orderData['team_id'] = (int) $teamId;
             }
 
-            $odooOrderId = $this->odooOrders->createFromShopify($orderData);
+            // FIX: uses ErpInterface::createOrder() — not Odoo-specific
+            $erpOrderId = $this->erp->createOrder($orderData);
 
             if (in_array($amazonOrder['OrderStatus'] ?? '', ['Unshipped', 'PartiallyShipped', 'Shipped'])) {
-                $this->odooOrders->confirmOrder($odooOrderId);
+                $this->erp->confirmOrder($erpOrderId);
             }
 
-            $this->mappings->upsert(self::ENTITY_ORDER, (string) $odooOrderId, $amazonOrderId, [
+            $this->mappings->upsert(self::ENTITY_ORDER, (string) $erpOrderId, $amazonOrderId, [
                 'shopify_handle' => $amazonOrderId,
                 'last_synced_at' => now(),
             ]);
 
-            $log->markSuccess(json_encode(['odoo_order_id' => $odooOrderId]));
-            Log::info("Amazon order {$amazonOrderId} → Odoo #{$odooOrderId}");
+            $log->markSuccess(json_encode(['erp_order_id' => $erpOrderId]));
+            Log::info("Amazon order {$amazonOrderId} → {$this->erp->driverName()} #{$erpOrderId}");
 
-            return $odooOrderId;
+            return $erpOrderId;
         } catch (\Throwable $e) {
             $log->markFailed($e->getMessage(), ['trace' => substr($e->getTraceAsString(), 0, 500)]);
             throw $e;
         }
     }
-
-    // ────────────────────────────────────────────────────────────────────
-    // Private helpers
-    // ────────────────────────────────────────────────────────────────────
 
     private function resolveOrCreatePartner(array $amazonOrder): int
     {
@@ -144,7 +132,8 @@ class AmazonOrderSyncService
         $email   = $amazonOrder['BuyerInfo']['BuyerEmail'] ?? '';
 
         if ($email && !str_contains($email, 'marketplace.amazon')) {
-            $existing = $this->odooCustomers->findByEmail($email);
+            // FIX: uses ErpInterface::findCustomerByEmail()
+            $existing = $this->erp->findCustomerByEmail($email);
             if ($existing) return $existing['id'];
         }
 
@@ -152,9 +141,10 @@ class AmazonOrderSyncService
         $stateId   = null;
 
         if (!empty($address['CountryCode'])) {
-            $countryId = $this->odooCustomers->resolveCountry($address['CountryCode']);
+            // FIX: uses ErpInterface::resolveCountry() / resolveState()
+            $countryId = $this->erp->resolveCountry($address['CountryCode']);
             if ($countryId && !empty($address['StateOrRegion'])) {
-                $stateId = $this->odooCustomers->resolveState($countryId, $address['StateOrRegion']);
+                $stateId = $this->erp->resolveState($countryId, $address['StateOrRegion']);
             }
         }
 
@@ -172,7 +162,8 @@ class AmazonOrderSyncService
         if ($countryId) $partnerData['country_id'] = $countryId;
         if ($stateId)   $partnerData['state_id']   = $stateId;
 
-        return $this->odooCustomers->create($partnerData);
+        // FIX: uses ErpInterface::createCustomer()
+        return $this->erp->createCustomer($partnerData);
     }
 
     private function buildOrderLines(array $orderItems): array
@@ -195,10 +186,9 @@ class AmazonOrderSyncService
             ]];
 
             if ($variantMapping) {
-                $line[2]['product_id'] = (int) $variantMapping->odoo_id;
+                $line[2]['product_id'] = (int) $variantMapping->erp_id;
             }
 
-            // ── Wire: Tax mapping ────────────────────────────────────────
             $taxIds = $this->resolveTaxIds($item['ItemTax'] ?? [], ChannelMapping::CHANNEL_AMAZON);
             if ($taxIds) {
                 $line[2]['tax_id'] = [[6, 0, $taxIds]];
@@ -210,14 +200,10 @@ class AmazonOrderSyncService
         return $lines;
     }
 
-    /**
-     * Resolve Amazon tax data → Odoo tax IDs via Tax mapping.
-     */
     private function resolveTaxIds(mixed $itemTax, string $channel): array
     {
         if (empty($itemTax)) return [];
 
-        // Amazon ItemTax can be a single object or array
         $taxLines = isset($itemTax['Amount']) ? [$itemTax] : (array) $itemTax;
         $taxIds   = [];
 
