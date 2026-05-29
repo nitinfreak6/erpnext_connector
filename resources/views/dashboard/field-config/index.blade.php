@@ -19,10 +19,10 @@
 </div>
 @endif
 
-{{-- Entity type tabs — driven from entity_definitions, no hardcoding --}}
+{{-- Entity type tabs --}}
 <div class="flex gap-2 mb-5 flex-wrap">
     @foreach($entities as $e)
-    <a href="{{ route('dashboard.product-field-config.index', ['entity' => $e->entity_type]) }}"
+    <a href="{{ route('dashboard.field-config.index', $e->entity_type) }}"
        class="px-3 py-1.5 rounded-lg text-xs font-medium transition
               {{ $e->entity_type === $entityType
                  ? 'bg-indigo-600 text-white'
@@ -53,14 +53,14 @@
         </div>
     </div>
     <div class="flex items-center gap-2">
-        <form method="POST" action="{{ route('dashboard.product-field-config.fetch-ecom-fields', ['entity' => $entityType]) }}">
+        <form method="POST" action="{{ route('dashboard.field-config.fetch-ecom-fields', $entityType) }}">
             @csrf
             <button type="submit" class="inline-flex items-center gap-1.5 text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                 Fetch {{ $ecomDisplayName }} Fields
             </button>
         </form>
-        <form method="POST" action="{{ route('dashboard.product-field-config.fetch-erp-fields', ['entity' => $entityType]) }}">
+        <form method="POST" action="{{ route('dashboard.field-config.fetch-erp-fields', $entityType) }}">
             @csrf
             <button type="submit" class="inline-flex items-center gap-1.5 text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
@@ -95,6 +95,7 @@
             <tr class="hover:bg-gray-50 transition {{ $config->is_active ? '' : 'opacity-40' }}">
                 <td class="px-4 py-3 text-xs text-gray-400">{{ $config->sort_order ?: $loop->iteration }}</td>
 
+                {{-- Ecom Field --}}
                 <td class="px-4 py-3">
                     <div class="font-mono text-xs text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded inline-block">
                         {{ $config->ecom_field ?? $config->shopify_field ?? '—' }}
@@ -104,6 +105,7 @@
                     @endif
                 </td>
 
+                {{-- Field Type --}}
                 <td class="px-4 py-3">
                     @if($config->field_type === 'default')
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">Default</span>
@@ -114,6 +116,7 @@
                     @endif
                 </td>
 
+                {{-- ERP Field --}}
                 <td class="px-4 py-3">
                     @if($config->field_type === 'default' && ($config->erp_field ?? $config->odoo_field))
                         <div class="font-mono text-xs text-gray-700 bg-gray-100 px-2 py-0.5 rounded inline-block">{{ $config->erp_field ?? $config->odoo_field }}</div>
@@ -133,6 +136,7 @@
                     @endif
                 </td>
 
+                {{-- Scope --}}
                 <td class="px-4 py-3">
                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
                         {{ $config->scope }}
@@ -142,8 +146,9 @@
                 <td class="px-4 py-3 text-xs text-gray-400 font-mono">{{ $config->transform ?: '—' }}</td>
                 <td class="px-4 py-3 text-xs text-gray-500">{{ ($config->field_type !== 'custom' && $config->default_value) ? $config->default_value : '—' }}</td>
 
+                {{-- Status --}}
                 <td class="px-4 py-3">
-                    <form method="POST" action="{{ route('dashboard.product-field-config.toggle', $config) }}">
+                    <form method="POST" action="{{ route('dashboard.field-config.toggle', [$entityType, $config]) }}">
                         @csrf @method('PATCH')
                         <button type="submit"
                                 class="text-xs px-2 py-0.5 rounded font-medium transition cursor-pointer
@@ -153,13 +158,14 @@
                     </form>
                 </td>
 
+                {{-- Actions --}}
                 <td class="px-4 py-3 text-right">
                     <div class="flex items-center justify-end gap-2">
                         <button @click="openEdit({{ json_encode($config) }})"
                                 class="text-indigo-500 hover:text-indigo-700 p-1 rounded hover:bg-indigo-50 transition" title="Edit">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                         </button>
-                        <form method="POST" action="{{ route('dashboard.product-field-config.destroy', $config) }}"
+                        <form method="POST" action="{{ route('dashboard.field-config.destroy', [$entityType, $config]) }}"
                               onsubmit="return confirm('Delete this mapping?')">
                             @csrf @method('DELETE')
                             <button type="submit" class="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50 transition" title="Delete">
@@ -198,25 +204,19 @@
         </div>
 
         <form x-ref="form"
-              action="{{ route('dashboard.product-field-config.store') }}"
+              action="{{ route('dashboard.field-config.store', $entityType) }}"
               method="POST"
               class="px-6 py-5 space-y-4 overflow-y-auto"
               style="max-height:75vh">
             @csrf
             <input type="hidden" name="_method" x-ref="method" value="POST">
-            <input type="hidden" name="entity_type" value="{{ $entityType }}">
 
             {{-- Ecom Field --}}
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">
                     {{ $ecomDisplayName }} Field <span class="text-red-500">*</span>
                 </label>
-                @php
-                    $allEcomFields = array_merge(
-                        $ecomFields['template_fields'] ?? $ecomFields['fields'] ?? [],
-                        $ecomFields['variant_fields'] ?? []
-                    );
-                @endphp
+                @php $allEcomFields = array_merge($ecomFields['template_fields'] ?? $ecomFields['fields'] ?? [], $ecomFields['variant_fields'] ?? []); @endphp
                 @if(!empty($allEcomFields))
                 <select name="ecom_field" x-model="form.ecom_field"
                         @change="onEcomFieldChange()"
@@ -228,14 +228,14 @@
                 </select>
                 @else
                 <input type="text" name="ecom_field" x-model="form.ecom_field"
-                       placeholder="e.g. title, price"
+                       placeholder="e.g. title, price, status"
                        class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none">
                 <p class="text-xs text-gray-400 mt-1">Fetch {{ $ecomDisplayName }} fields above to get a dropdown.</p>
                 @endif
                 <input type="hidden" name="ecom_field_label" :value="form.ecom_field_label">
             </div>
 
-            {{-- Scope — options from entity_definitions.scopes --}}
+            {{-- Scope — options from entity definition --}}
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Scope / Level</label>
                 <select name="scope" x-model="form.scope"
@@ -308,7 +308,7 @@
                     <label class="block text-sm font-medium text-gray-700 mb-1">Separator</label>
                     <input type="text" @input="form.combine_separator = $event.target.value" :value="form.combine_separator"
                            placeholder="e.g. - or / or space"
-                           class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 outline-none font-mono">
+                           class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none font-mono">
                 </div>
             </div>
 
@@ -345,17 +345,17 @@
                 </select>
             </div>
 
-            {{-- Min / Max --}}
+            {{-- Min / Max Length --}}
             <div class="grid grid-cols-2 gap-3">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Min Length</label>
                     <input type="number" name="min_length" x-model="form.min_length" min="0"
-                           class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 outline-none">
+                           class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Max Length</label>
                     <input type="number" name="max_length" x-model="form.max_length" min="0"
-                           class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 outline-none">
+                           class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none">
                 </div>
             </div>
 
@@ -364,11 +364,12 @@
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Sort Order</label>
                     <input type="number" name="sort_order" x-model="form.sort_order" min="0"
-                           class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 outline-none">
+                           class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none">
                 </div>
                 <div class="flex items-center gap-2 pb-2">
                     <input type="checkbox" name="is_active" value="1" id="modal_is_active"
-                           :checked="form.is_active" @change="form.is_active = $event.target.checked"
+                           :checked="form.is_active"
+                           @change="form.is_active = $event.target.checked"
                            class="rounded text-indigo-600">
                     <label for="modal_is_active" class="text-sm text-gray-700 cursor-pointer">Active</label>
                 </div>
@@ -395,9 +396,7 @@ function fieldConfigApp() {
     return {
         showModal: false,
         editId: null,
-
-        ecomFields: @json(array_merge($ecomFields['template_fields'] ?? $ecomFields['fields'] ?? [], $ecomFields['variant_fields'] ?? [])),
-        erpFields:  @json($erpFields['fields'] ?? array_merge($erpFields['template_fields'] ?? [], $erpFields['variant_fields'] ?? [])),
+        entityType: '{{ $entityType }}',
 
         form: {
             ecom_field: '', ecom_field_label: '',
@@ -410,6 +409,9 @@ function fieldConfigApp() {
             min_length: '', max_length: '',
             sort_order: 0, is_active: true,
         },
+
+        ecomFields: @json(array_merge($ecomFields['template_fields'] ?? $ecomFields['fields'] ?? [], $ecomFields['variant_fields'] ?? [])),
+        erpFields:  @json($erpFields['fields'] ?? array_merge($erpFields['template_fields'] ?? [], $erpFields['variant_fields'] ?? [])),
 
         init() {},
 
@@ -427,7 +429,7 @@ function fieldConfigApp() {
                 sort_order: 0, is_active: true,
             };
             this.$nextTick(() => {
-                this.$refs.form.action = '{{ route('dashboard.product-field-config.store') }}';
+                this.$refs.form.action = '/dashboard/field-config/' + this.entityType;
                 this.$refs.method.value = 'POST';
             });
             this.showModal = true;
@@ -436,24 +438,24 @@ function fieldConfigApp() {
         openEdit(config) {
             this.editId = config.id;
             this.form = {
-                ecom_field:        config.ecom_field        || config.shopify_field       || '',
-                ecom_field_label:  config.ecom_field_label  || config.shopify_field_label || '',
+                ecom_field:        config.ecom_field       || config.shopify_field || '',
+                ecom_field_label:  config.ecom_field_label || config.shopify_field_label || '',
                 field_type:        config.field_type        || 'default',
-                erp_field:         config.erp_field         || config.odoo_field          || '',
-                erp_field_label:   config.erp_field_label   || config.odoo_field_label    || '',
-                erp_field_2:       config.erp_field_2       || config.odoo_field_2        || '',
-                erp_field_2_label: config.erp_field_2_label || config.odoo_field_2_label  || '',
-                combine_separator: config.combine_separator || ' ',
-                scope:             config.scope             || '{{ $entity->scopes[0] ?? "header" }}',
-                default_value:     config.default_value     || '',
-                transform:         config.transform         || '',
-                min_length:        config.min_length        || '',
-                max_length:        config.max_length        || '',
-                sort_order:        config.sort_order        || 0,
+                erp_field:         config.erp_field         || config.odoo_field        || '',
+                erp_field_label:   config.erp_field_label   || config.odoo_field_label   || '',
+                erp_field_2:       config.erp_field_2       || config.odoo_field_2       || '',
+                erp_field_2_label: config.erp_field_2_label || config.odoo_field_2_label || '',
+                combine_separator: config.combine_separator  || ' ',
+                scope:             config.scope              || '{{ $entity->scopes[0] ?? "header" }}',
+                default_value:     config.default_value      || '',
+                transform:         config.transform          || '',
+                min_length:        config.min_length         || '',
+                max_length:        config.max_length         || '',
+                sort_order:        config.sort_order         || 0,
                 is_active:         config.is_active,
             };
             this.$nextTick(() => {
-                this.$refs.form.action = '/dashboard/product-field-config/' + config.id;
+                this.$refs.form.action = '/dashboard/field-config/' + this.entityType + '/' + config.id;
                 this.$refs.method.value = 'PUT';
             });
             this.showModal = true;

@@ -75,7 +75,7 @@ class OrdersController extends Controller
         // This dispatches job that:
         // 1. Gets orders from ERP (Odoo)
         // 2. Creates/updates them in Ecom (Shopify)
-        \App\Jobs\Erp\FetchErpOrdersJob::dispatch();
+        \App\Jobs\Erp\FetchErpOrdersJob::dispatchSync();
         
         $erpDriver = app(\App\Services\SettingsService::class)->erpDriver();
         return redirect()->route('dashboard.orders')
@@ -90,7 +90,7 @@ class OrdersController extends Controller
         // This dispatches job that:
         // 1. Gets orders from Ecom (Shopify)
         // 2. Creates/updates them in ERP (Odoo)
-        \App\Jobs\Ecom\FetchEcomOrdersJob::dispatch();
+        \App\Jobs\Ecom\FetchEcomOrdersJob::dispatchSync();
         
         $ecomDriver = app(\App\Services\SettingsService::class)->ecomDriver();
         return redirect()->route('dashboard.orders')

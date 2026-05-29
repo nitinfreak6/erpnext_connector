@@ -172,9 +172,15 @@ class SettingsService
     // not a special named channel. Use ecomDriver() === 'shopify' if you need this check.
 
     public function isAmazonChannelEnabled(): bool
-    {
-        return $this->isEnabled('amazon_channel_enabled', true);
-    }
+	{
+		// Channel toggle must be on AND credentials must exist
+		if (!$this->isEnabled('amazon_channel_enabled', true)) {
+			return false;
+		}
+
+		// If no seller ID configured, Amazon is not actually usable
+		return !empty($this->amazonSellerId());
+	}
 
     // ── Sync modes ─────────────────────────────────────────────────────
 

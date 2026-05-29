@@ -12,12 +12,6 @@ use App\Services\Shopify\ShopifyCustomerService;
 use App\Services\Shopify\ShopifyFulfillmentService;
 use Illuminate\Support\Facades\Log;
 
-/**
- * Shopify E-commerce Adapter
- * 
- * Implements EcomInterface for Shopify platform.
- * Wraps existing Shopify services into the unified interface.
- */
 class ShopifyEcomAdapter implements EcomInterface
 {
     private ShopifyService $shopify;
@@ -35,11 +29,11 @@ class ShopifyEcomAdapter implements EcomInterface
         ShopifyCustomerService $customers,
         ShopifyFulfillmentService $fulfillment
     ) {
-        $this->shopify = $shopify;
-        $this->products = $products;
-        $this->orders = $orders;
-        $this->inventory = $inventory;
-        $this->customers = $customers;
+        $this->shopify     = $shopify;
+        $this->products    = $products;
+        $this->orders      = $orders;
+        $this->inventory   = $inventory;
+        $this->customers   = $customers;
         $this->fulfillment = $fulfillment;
     }
 
@@ -48,9 +42,7 @@ class ShopifyEcomAdapter implements EcomInterface
         return 'shopify';
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // PRODUCTS
-    // ══════════════════════════════════════════════════════════════════════
+    // ── Products ──────────────────────────────────────────────────────────
 
     public function getProducts(array $filters = []): array
     {
@@ -77,9 +69,54 @@ class ShopifyEcomAdapter implements EcomInterface
         $this->products->delete($id);
     }
 
+    /**
+     * Sync ERP product → Shopify.
+     * Builds payload from field configs, creates or updates via GraphQL.
+     * This is the only method PushProductToEcomJob calls — all Shopify
+     * specifics stay inside this adapter.
+     */
+    public function syncProduct(array $erpTemplate, array $variants, array $attributeValues): string
+    {
+        $erpId = (string) $erpTemplate['id'];
+
+        $payload = $this->products->buildPayload($erpTemplate, $variants, $attributeValues);
+
+        if (empty($payload)) {
+            throw new \RuntimeException(
+                "ShopifyEcomAdapter: empty payload for ERP #{$erpId} — add field mappings in Product Field Config."
+            );
+        }
+
+        $mapping = \App\Models\SyncMapping::where('entity_type', 'product')
+            ->where('erp_id', $erpId)
+            ->first();
+
+        if ($mapping && $mapping->ecom_id) {
+            $this->products->update($mapping->ecom_id, $payload);
+            $shopifyId = $mapping->ecom_id;
+        } else {
+            $result    = $this->products->create($payload);
+            $shopifyId = (string) ($result['id'] ?? $result['product']['id'] ?? '');
+
+            if ($shopifyId) {
+                \App\Models\SyncMapping::updateOrCreate(
+                    ['entity_type' => 'product', 'erp_id' => $erpId],
+                    [
+                        'ecom_id'             => $shopifyId,
+                        'ecom_driver'         => 'shopify',
+                        'erp_driver'          => app(\App\Services\SettingsService::class)->erpDriver(),
+                        'last_sync_direction' => 'erp_to_ecom',
+                        'last_synced_at'      => now(),
+                    ]
+                );
+            }
+        }
+
+        return $shopifyId;
+    }
+
     public function getVariants(array $productIds): array
     {
-        // Shopify variants are nested in products
         $variants = [];
         foreach ($productIds as $productId) {
             $product = $this->getProduct($productId);
@@ -90,9 +127,7 @@ class ShopifyEcomAdapter implements EcomInterface
         return $variants;
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // ORDERS
-    // ══════════════════════════════════════════════════════════════════════
+    // ── Orders ────────────────────────────────────────────────────────────
 
     public function getOrders(array $filters = []): array
     {
@@ -119,9 +154,7 @@ class ShopifyEcomAdapter implements EcomInterface
         $this->orders->cancel($id, $reason);
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // INVENTORY
-    // ══════════════════════════════════════════════════════════════════════
+    // ── Inventory ─────────────────────────────────────────────────────────
 
     public function updateInventory(string|int $variantId, int $quantity, ?string $locationId = null): void
     {
@@ -133,9 +166,7 @@ class ShopifyEcomAdapter implements EcomInterface
         return $this->inventory->getLevels($variantIds);
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // CUSTOMERS
-    // ══════════════════════════════════════════════════════════════════════
+    // ── Customers ─────────────────────────────────────────────────────────
 
     public function getCustomers(array $filters = []): array
     {
@@ -153,42 +184,35 @@ class ShopifyEcomAdapter implements EcomInterface
         return $this->customers->update($id, $customerData);
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // WEBHOOKS
-    // ══════════════════════════════════════════════════════════════════════
+    // ── Webhooks ──────────────────────────────────────────────────────────
 
     public function registerWebhooks(array $topics): array
     {
         $registered = [];
-        $baseUrl = config('app.url');
+        $baseUrl    = config('app.url');
 
         $topicToEndpoint = [
-            'orders/create'      => '/webhook/shopify/orders/create',
-            'orders/updated'     => '/webhook/shopify/orders/updated',
-            'products/create'    => '/webhook/shopify/products/create',
-            'products/update'    => '/webhook/shopify/products/update',
+            'orders/create'           => '/webhook/shopify/orders/create',
+            'orders/updated'          => '/webhook/shopify/orders/updated',
+            'products/create'         => '/webhook/shopify/products/create',
+            'products/update'         => '/webhook/shopify/products/update',
             'inventory_levels/update' => '/webhook/shopify/inventory/update',
-            'customers/create'   => '/webhook/shopify/customers/create',
-            'customers/update'   => '/webhook/shopify/customers/update',
+            'customers/create'        => '/webhook/shopify/customers/create',
+            'customers/update'        => '/webhook/shopify/customers/update',
         ];
 
         foreach ($topics as $topic) {
             if (!isset($topicToEndpoint[$topic])) {
-                Log::warning("Unknown webhook topic: {$topic}");
+                Log::warning("ShopifyEcomAdapter: unknown webhook topic: {$topic}");
                 continue;
             }
 
             try {
-                $webhook = $this->shopify->createWebhook(
-                    $topic,
-                    $baseUrl . $topicToEndpoint[$topic]
-                );
+                $webhook      = $this->shopify->createWebhook($topic, $baseUrl . $topicToEndpoint[$topic]);
                 $registered[] = $webhook;
-                Log::info("Registered Shopify webhook: {$topic}");
+                Log::info("ShopifyEcomAdapter: registered webhook: {$topic}");
             } catch (\Throwable $e) {
-                Log::error("Failed to register Shopify webhook: {$topic}", [
-                    'error' => $e->getMessage()
-                ]);
+                Log::error("ShopifyEcomAdapter: failed to register webhook: {$topic} — " . $e->getMessage());
             }
         }
 
@@ -197,15 +221,11 @@ class ShopifyEcomAdapter implements EcomInterface
 
     public function unregisterAllWebhooks(): void
     {
-        $webhooks = $this->listWebhooks();
-        foreach ($webhooks as $webhook) {
+        foreach ($this->listWebhooks() as $webhook) {
             try {
                 $this->shopify->deleteWebhook($webhook['id']);
-                Log::info("Unregistered Shopify webhook: {$webhook['topic']}");
             } catch (\Throwable $e) {
-                Log::error("Failed to unregister webhook: {$webhook['id']}", [
-                    'error' => $e->getMessage()
-                ]);
+                Log::error("ShopifyEcomAdapter: failed to unregister webhook #{$webhook['id']} — " . $e->getMessage());
             }
         }
     }
@@ -220,9 +240,7 @@ class ShopifyEcomAdapter implements EcomInterface
         return $this->shopify->verifyWebhook($payload, $signature);
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // FULFILLMENT
-    // ══════════════════════════════════════════════════════════════════════
+    // ── Fulfillment ───────────────────────────────────────────────────────
 
     public function createFulfillment(string|int $orderId, array $fulfillmentData): array
     {

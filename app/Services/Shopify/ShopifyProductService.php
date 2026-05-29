@@ -477,7 +477,7 @@ class ShopifyProductService
     // toGraphQLInput() then routes them into the correct GraphQL structure.
     // ─────────────────────────────────────────────────────────────────────
 
-    public function buildPayload(array $odooTemplate, array $variants, array $attributeValues): array
+    public function buildPayload(array $erpTemplate, array $variants, array $attributeValues): array
     {
         $configs         = $this->getFieldConfigs();
         $templateConfigs = array_filter($configs, fn($c) => $c['scope'] === 'template');
@@ -489,12 +489,10 @@ class ShopifyProductService
             $key = $config['shopify_field'];
 
             if (!$config['is_active']) {
-                // Inactive → omit entirely (field will not be sent to Shopify)
-                // Sending null/empty for unknown future fields could cause errors
                 continue;
             }
 
-            $value = $this->resolveValue($odooTemplate, $config);
+            $value = $this->resolveValue($erpTemplate, $config);
             if ($value === null || $value === '') continue;
 
             $payload[$key] = $value;
@@ -505,11 +503,6 @@ class ShopifyProductService
             $payload['status'] = 'draft';
         }
 
-        // Category override from ProductSyncService
-        if (!empty($odooTemplate['_shopify_product_type'])) {
-            $payload['productType'] = $odooTemplate['_shopify_product_type'];
-        }
-
         // Variants
         $shopifyVariants = array_map(
             fn($v) => $this->buildVariantPayload($v, $attributeValues, $variantConfigs),
@@ -518,7 +511,7 @@ class ShopifyProductService
         $payload['variants'] = $shopifyVariants;
 
         // Options
-        if (!empty($odooTemplate['attribute_line_ids'])) {
+        if (!empty($erpTemplate['attribute_line_ids'])) {
             $options = $this->buildOptions($attributeValues, $shopifyVariants);
             if (!empty($options)) {
                 $payload['options'] = $options;
@@ -642,13 +635,27 @@ class ShopifyProductService
         $inventoryItem = [];
         $optionValues  = [];
 
+        // Pre-extract _option_name_N keys before the loop
+        $optionNameMap = [];
+        foreach ($variantPayload as $k => $v) {
+            if (str_starts_with($k, '_option_name_')) {
+                $pos = (int) substr($k, strlen('_option_name_'));
+                $optionNameMap[$pos] = (string) $v;
+            }
+        }
+
         foreach ($variantPayload as $key => $value) {
             if ($value === null || $value === '') continue;
 
+            // Skip internal _option_name_N keys — not sent to Shopify
+            if (str_starts_with($key, '_option_name_')) continue;
+
             // ── option1/2/3 ──────────────────────────────────────────────
             if (in_array($key, ['option1', 'option2', 'option3'], true)) {
-                $pos = (int)substr($key, -1);
-                $optionValues[$pos] = ['name' => "Option {$pos}", 'value' => (string)$value];
+                $pos  = (int) substr($key, -1);
+                // Use real attribute name (e.g. 'Color') not generic 'Option 1'
+                $name = $optionNameMap[$pos] ?? 'Option ' . $pos;
+                $optionValues[$pos] = ['name' => $name, 'value' => (string) $value];
                 continue;
             }
 
@@ -795,10 +802,17 @@ class ShopifyProductService
         }
 
         // Attribute values → option1/2/3
+        // Store both the option value AND the attribute name so buildOptions()
+        // can use the real attribute name (e.g. 'Color') not generic 'Option 1'
         foreach (array_slice($avIds, 0, 3) as $index => $avId) {
             $av = $avMap[$avId] ?? null;
             if ($av) {
-                $out['option' . ($index + 1)] = $av['_mapped_name'] ?? $av['name'];
+                $pos = $index + 1;
+                $out['option' . $pos] = $av['_mapped_name'] ?? $av['name'];
+                // Store attribute name for buildOptions() — e.g. 'Color', 'Size'
+                $out['_option_name_' . $pos] = is_array($av['attribute_id'])
+                    ? $av['attribute_id'][1]
+                    : ($av['attribute_id'] ?? 'Option ' . $pos);
             }
         }
 
@@ -817,7 +831,9 @@ class ShopifyProductService
             foreach (['option1', 'option2', 'option3'] as $i => $k) {
                 if (!empty($variant[$k]) && !isset($seen[$i])) {
                     $seen[$i] = true;
-                    $options[] = ['name' => 'Option ' . ($i + 1), 'values' => []];
+                    // Use real attribute name stored by buildVariantPayload
+                    $attrName  = $variant['_option_name_' . ($i + 1)] ?? ('Option ' . ($i + 1));
+                    $options[$i] = ['name' => $attrName, 'values' => []];
                 }
             }
         }
@@ -921,22 +937,34 @@ class ShopifyProductService
 
     private function getFieldConfigs(): array
     {
-        return Cache::remember('product_field_configs_shopify', 60, function () {
-            return ProductFieldConfig::where('channel', 'shopify')
-                ->orderBy('sort_order')->orderBy('id')
+        $settings   = app(\App\Services\SettingsService::class);
+        $ecomDriver = $settings->ecomDriver();  // 'shopify'
+        $erpDriver  = $settings->erpDriver();   // 'odoo', 'sap', etc.
+        $cacheKey   = "product_field_configs_{$ecomDriver}_{$erpDriver}";
+
+        return Cache::remember($cacheKey, 60, function () use ($ecomDriver, $erpDriver) {
+            return ProductFieldConfig::where('ecom_driver', $ecomDriver)
+                ->where('erp_driver', $erpDriver)
+                ->where('is_active', true)
+                ->orderBy('sort_order')
+                ->orderBy('id')
                 ->get()
                 ->map(fn($c) => [
-                    'shopify_field'     => $c->shopify_field,
+                    // ecom_field is the GraphQL/REST key (renamed from shopify_field)
+                    'ecom_field'        => $c->ecom_field     ?? $c->shopify_field,
+                    'shopify_field'     => $c->ecom_field     ?? $c->shopify_field, // alias kept for routing rules
                     'field_type'        => $c->field_type,
-                    'odoo_field'        => $c->odoo_field,
-                    'odoo_field_2'      => $c->odoo_field_2,
+                    'erp_field'         => $c->erp_field      ?? $c->odoo_field,
+                    'odoo_field'        => $c->erp_field      ?? $c->odoo_field,   // alias kept for resolveValue
+                    'erp_field_2'       => $c->erp_field_2    ?? $c->odoo_field_2,
+                    'odoo_field_2'      => $c->erp_field_2    ?? $c->odoo_field_2, // alias
                     'combine_separator' => $c->combine_separator ?? ' ',
                     'scope'             => $c->scope,
                     'default_value'     => $c->default_value,
                     'transform'         => $c->transform,
                     'min_length'        => $c->min_length,
                     'max_length'        => $c->max_length,
-                    'is_active'         => (bool)$c->is_active,
+                    'is_active'         => (bool) $c->is_active,
                 ])
                 ->toArray();
         });
@@ -946,15 +974,15 @@ class ShopifyProductService
     // Value resolvers (Odoo → intermediate value)
     // ─────────────────────────────────────────────────────────────────────
 
-    private function resolveValue(array $odooData, array $config): mixed
+    private function resolveValue(array $erpData, array $config): mixed
     {
         if ($config['field_type'] === 'custom') {
             return $config['default_value'] ?? null;
         }
 
         if ($config['field_type'] === 'combine') {
-            $val1  = $this->readOdooField($odooData, $config['odoo_field']   ?? '');
-            $val2  = $this->readOdooField($odooData, $config['odoo_field_2'] ?? '');
+            $val1  = $this->readErpField($erpData, $config['odoo_field']   ?? '');
+            $val2  = $this->readErpField($erpData, $config['odoo_field_2'] ?? '');
             $val1  = ($val1 === false) ? '' : (string)($val1 ?? '');
             $val2  = ($val2 === false) ? '' : (string)($val2 ?? '');
             $sep   = $config['combine_separator'] ?? ' ';
@@ -963,10 +991,10 @@ class ShopifyProductService
             return $this->applyLengthConstraints($value, $config);
         }
 
-        $raw = $this->readOdooField($odooData, $config['odoo_field'] ?? '');
+        $raw = $this->readErpField($erpData, $config['odoo_field'] ?? '');
         if ($raw === false) $raw = null;
 
-        $value = $this->applyTransform($raw, $config['transform'], $odooData);
+        $value = $this->applyTransform($raw, $config['transform'], $erpData);
         if ($value === null || $value === false || $value === '') {
             $value = $config['default_value'] ?? null;
         }
@@ -974,7 +1002,7 @@ class ShopifyProductService
         return $this->applyLengthConstraints($value, $config);
     }
 
-    private function readOdooField(array $data, string $key): mixed
+    private function readErpField(array $data, string $key): mixed
     {
         if ($key === '') return null;
 

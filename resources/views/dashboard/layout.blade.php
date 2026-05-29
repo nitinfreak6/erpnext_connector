@@ -212,11 +212,14 @@
 				<p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Field Configuration</p>
 			</div>
 
-			<div x-data="{ fieldConfigOpen: {{ request()->routeIs('dashboard.product-field-config*') ? 'true' : 'false' }} }">
-				{{-- Toggle button --}}
+			@php
+				$fieldConfigEntities = \App\Models\EntityDefinition::where('is_active', true)->orderBy('sort_order')->get();
+				$fieldConfigActive   = request()->routeIs('dashboard.product-field-config*');
+			@endphp
+			<div x-data="{ fieldConfigOpen: {{ $fieldConfigActive ? 'true' : 'false' }} }">
 				<button @click="fieldConfigOpen = !fieldConfigOpen"
 						class="w-full flex items-center justify-between gap-3 px-3 py-2 text-sm rounded-lg transition-colors
-							   {{ request()->routeIs('dashboard.product-field-config*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
+							   {{ $fieldConfigActive ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
 					<div class="flex items-center gap-3">
 						<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -230,40 +233,25 @@
 					</svg>
 				</button>
 
-				{{-- Sub-items --}}
+				{{-- Sub-items — driven from entity_definitions table, no hardcoding --}}
 				<div x-show="fieldConfigOpen" x-cloak
 					 x-transition:enter="transition ease-out duration-100"
 					 x-transition:enter-start="opacity-0 -translate-y-1"
 					 x-transition:enter-end="opacity-100 translate-y-0"
 					 class="mt-1 ml-3 pl-3 border-l border-indigo-700/50 space-y-0.5">
 
-					{{-- Products --}}
-					<a href="{{ route('dashboard.product-field-config.index') }}"
+					@foreach($fieldConfigEntities as $fcEntity)
+					<a href="{{ route('dashboard.product-field-config.index', ['entity' => $fcEntity->entity_type]) }}"
 					   class="flex items-center gap-2.5 px-2 py-1.5 text-xs rounded-lg transition-colors
-							  {{ request()->routeIs('dashboard.product-field-config*')
+							  {{ request()->routeIs('dashboard.product-field-config*') && request()->query('entity') === $fcEntity->entity_type
 								 ? 'bg-indigo-600 text-white font-medium'
 								 : 'text-indigo-200 hover:bg-indigo-700/50 hover:text-white' }}">
-						<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-								  d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+						<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
 						</svg>
-						Products
+						{{ $fcEntity->label }}
 					</a>
-
-					{{-- Future entries: Orders, Dispatch, etc. --}}
-					{{-- Example:
-					<a href="{{ route('dashboard.order-field-config.index') }}"
-					   class="flex items-center gap-2.5 px-2 py-1.5 text-xs rounded-lg transition-colors
-							  {{ request()->routeIs('dashboard.order-field-config*')
-								 ? 'bg-indigo-600 text-white font-medium'
-								 : 'text-indigo-200 hover:bg-indigo-700/50 hover:text-white' }}">
-						<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-								  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
-						</svg>
-						Orders
-					</a>
-					--}}
+					@endforeach
 
 				</div>
 			</div>
@@ -321,9 +309,9 @@
                     <div x-show="open" x-cloak @click.outside="open = false"
                          class="absolute right-0 top-10 w-52 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1">
                         @foreach([
-                            'products' => $ecomDisplayName . ' Products',
-                            'inventory' => $ecomDisplayName . ' Inventory',
-                            'orders' => $ecomDisplayName . ' Orders',
+                            'products' => 'Shopify Products',
+                            'inventory' => 'Shopify Inventory',
+                            'orders' => 'Shopify Orders',
                             'customers' => 'Customers',
                             'amazon_products' => 'Amazon Products',
                             'amazon_orders' => 'Amazon Orders',

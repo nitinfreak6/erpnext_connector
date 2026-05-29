@@ -14,26 +14,32 @@ class AmazonService
     private Client $client;
     private Client $lwaClient;
     private string $endpoint;
-    private string $marketplaceId;
-    private string $sellerId;
+    private string $marketplaceId  = '';
+    private string $sellerId       = '';
 
     public function __construct()
-    {
-         $settings = app(\App\Services\SettingsService::class);
-		 $this->endpoint = rtrim($settings->get('amazon_sp_endpoint') ?? config('amazon.endpoint'), '/');
-		 $this->marketplaceId = $settings->amazonMarketplaceId() ?: config('amazon.marketplace_id');
-		 $this->sellerId      = $settings->amazonSellerId() ?: config('amazon.seller_id');
+	{
+		$settings = app(\App\Services\SettingsService::class);
 
-        $this->lwaClient = new Client([
-            'base_uri' => config('amazon.lwa_token_url'),
-            'timeout'  => 10,
-        ]);
+		$this->endpoint      = rtrim($settings->get('amazon_sp_endpoint') ?? config('amazon.endpoint', ''), '/');
+		$this->marketplaceId = $settings->amazonMarketplaceId() ?: config('amazon.marketplace_id', '');
+		$this->sellerId      = $settings->amazonSellerId()      ?: config('amazon.seller_id', '');
 
-        $this->client = new Client([
-            'base_uri' => $this->endpoint . '/',
-            'timeout'  => config('amazon.timeout', 30),
-        ]);
-    }
+		// Guard — don't construct HTTP clients if not configured
+		if (empty($this->sellerId) || empty($this->marketplaceId)) {
+			return;
+		}
+
+		$this->lwaClient = new Client([
+			'base_uri' => config('amazon.lwa_token_url'),
+			'timeout'  => 10,
+		]);
+
+		$this->client = new Client([
+			'base_uri' => $this->endpoint . '/',
+			'timeout'  => config('amazon.timeout', 30),
+		]);
+	}
 
     /**
      * Get a valid LWA access token, refreshing if expired.

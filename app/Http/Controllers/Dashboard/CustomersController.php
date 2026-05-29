@@ -183,7 +183,7 @@ class CustomersController extends Controller
             return back()->with('error', 'Cannot fetch from ERP when sync mode is Ecom → ERP.');
         }
 
-        FetchErpCustomersJob::dispatch();
+        FetchErpCustomersJob::dispatchSync();
         
         return back()->with('success', sprintf(
             'Customer fetch from %s queued successfully.', 
@@ -200,7 +200,7 @@ class CustomersController extends Controller
             return back()->with('error', 'Cannot pull from Ecom when sync mode is ERP → Ecom.');
         }
 
-        FetchEcomCustomersJob::dispatch();
+        FetchEcomCustomersJob::dispatchSync();
         
         return back()->with('success', sprintf(
             'Pull from %s queued successfully.', 

@@ -2,8 +2,10 @@
 
 namespace App\Jobs\Ecom;
 
+use App\Models\SyncMapping;
 use App\Models\SyncQueueState;
 use App\Services\Ecom\EcomInterface;
+use App\Services\SettingsService;
 use App\Services\Sync\CustomerSyncService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -14,157 +16,148 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Fetch customers from Ecom platform (Shopify/WooCommerce/Magento) and sync to ERP
- * 
- * Driver-agnostic: Works with ANY Ecom platform via EcomInterface
+ * Pull NEW and UPDATED customers from ecom → ERP.
+ *
+ * Cursor: last_ecom_write_date in sync_queue_state (type = 'customers').
+ * Only customers updated since the last run are fetched — reduces API load.
  */
 class FetchEcomCustomersJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $uniqueFor = 3600;
-    public int $timeout = 600;
+    public int $timeout   = 600;
 
     public function __construct()
     {
         $this->onQueue('sync');
     }
 
-    public function handle(EcomInterface $ecom, CustomerSyncService $customerSync): void
+    public function handle(EcomInterface $ecom, SettingsService $settings, CustomerSyncService $customerSync): void
     {
-        // Use sync_type column instead of type
-        $state = SyncQueueState::where('sync_type', 'customers')->first();
-        
-        if (!$state) {
-            Log::error('FetchEcomCustomersJob: No sync_queue_state record found for customers');
+        if (!$settings->isCustomerSyncEnabled()) {
+            Log::info('FetchEcomCustomersJob: skipped — customer sync disabled.');
             return;
         }
-        
-        if ($state->is_running) {
+
+        $syncMode = $settings->customerSyncMode();
+
+        if ($syncMode === 'erp_to_ecom') {
+            Log::info('FetchEcomCustomersJob: skipped — mode is erp_to_ecom.');
+            return;
+        }
+
+        $state = SyncQueueState::forType('customers');
+
+        if ($state->is_running && $state->run_started_at?->gt(now()->subMinutes(30))) {
             Log::warning('FetchEcomCustomersJob: previous run still active, skipping.');
             return;
         }
 
         $state->update(['is_running' => true, 'run_started_at' => now()]);
+        $driver = $ecom->driverName();
 
         try {
-            $driverName = $ecom->driverName();
-            
-            Log::info("FetchEcomCustomersJob [{$driverName}]: Starting customer pull...");
-            
-            // Fetch customers from ecom platform
-            // Note: Different platforms have different approaches:
-            // - Shopify: GraphQL bulk query or REST API pagination
-            // - WooCommerce: REST API with per_page parameter
-            // - Magento: SearchCriteria API
-            
-            $customers = $this->fetchAllCustomers($ecom, $driverName);
-            
-            Log::info("FetchEcomCustomersJob [{$driverName}]: Found " . count($customers) . " customers");
-            
-            if (count($customers) === 0) {
-                Log::warning("FetchEcomCustomersJob [{$driverName}]: No customers found.");
-            }
+            // Cursor: use last_ecom_write_date — only fetch changed customers
+            $since = $state->last_ecom_write_date ?? now()->subDays(30)->toIso8601String();
 
-            $synced = 0;
-            $failed = 0;
-            $skipped = 0;
+            Log::info("FetchEcomCustomersJob [{$driver}]: fetching customers updated since {$since}");
+
+            $customers = $this->fetchUpdatedCustomers($ecom, $driver, $since);
+
+            Log::info("FetchEcomCustomersJob [{$driver}]: found " . count($customers) . ' customers.');
+
+            $synced  = 0;
+            $updated = 0;
+            $failed  = 0;
 
             foreach ($customers as $customer) {
                 try {
-                    // Check if this ecom customer is already mapped
-                    $existingMapping = \App\Models\SyncMapping::where('entity_type', 'customer')
-                        ->where('ecom_id', $customer['id'])
-                        ->first();
-                    
-                    if ($existingMapping) {
-                        $skipped++;
-                        Log::debug("FetchEcomCustomersJob [{$driverName}]: Customer {$customer['id']} already mapped to ERP #{$existingMapping->erp_id}, skipping");
+                    $ecomId = (string) ($customer['id'] ?? '');
+
+                    if (!$ecomId) {
                         continue;
                     }
-                    
-                    // Sync customer to ERP
-                    // CustomerSyncService has syncCustomer() not syncFromEcom()
-                    $customerSync->syncCustomer($customer);
-                    $synced++;
-                } catch (\Exception $e) {
+
+                    $mapping = SyncMapping::where('entity_type', 'customer')
+                        ->where('ecom_id', $ecomId)
+                        ->first();
+
+                    if ($mapping) {
+                        // Already exists — update in ERP
+                        $customerSync->syncCustomerToErp($customer);
+                        $updated++;
+                    } else {
+                        // New customer
+                        $customerSync->syncCustomerToErp($customer);
+                        $synced++;
+                    }
+                } catch (\Throwable $e) {
+                    Log::error("FetchEcomCustomersJob [{$driver}]: failed for customer " . ($customer['id'] ?? '?') . ': ' . $e->getMessage());
                     $failed++;
-                    Log::error("FetchEcomCustomersJob [{$driverName}]: Failed to sync customer {$customer['id']}: " . $e->getMessage());
                 }
             }
 
+            // Advance cursor
             $state->update([
-                'is_running' => false,
-                'completed_at' => now(),
-                'notes' => "Synced: {$synced}, Failed: {$failed}, Skipped: {$skipped}",
+                'is_running'           => false,
+                'last_poll_at'         => now(),
+                'last_ecom_write_date' => now()->toIso8601String(),
+                'run_started_at'       => null,
+                'notes'                => "New: {$synced}, Updated: {$updated}, Failed: {$failed}",
             ]);
-            
-            Log::info("FetchEcomCustomersJob [{$driverName}]: Completed. Synced: {$synced}, Failed: {$failed}, Skipped: {$skipped}");
-            
+
+            Log::info("FetchEcomCustomersJob [{$driver}]: done. New: {$synced}, Updated: {$updated}, Failed: {$failed}");
+
         } catch (\Throwable $e) {
-            $state->update([
-                'is_running' => false, 
-                'notes' => $e->getMessage()
-            ]);
-            
-            Log::error("FetchEcomCustomersJob: " . $e->getMessage());
+            $state->update(['is_running' => false, 'notes' => $e->getMessage()]);
+            Log::error("FetchEcomCustomersJob [{$driver}]: job failed — " . $e->getMessage());
             throw $e;
         }
     }
 
-    /**
-     * Fetch all customers from ecom platform with pagination
-     */
-    private function fetchAllCustomers(EcomInterface $ecom, string $driverName): array
+    private function fetchUpdatedCustomers(EcomInterface $ecom, string $driver, string $since): array
     {
-        $allCustomers = [];
-        $page = 1;
-        $limit = 250; // Fetch in batches
-        
+        if (!method_exists($ecom, 'getCustomers')) {
+            Log::warning("FetchEcomCustomersJob [{$driver}]: getCustomers() not implemented.");
+            return [];
+        }
+
+        $all     = [];
+        $page    = 1;
+        $limit   = 250;
+
         do {
             try {
-                // Check if ecom driver has getCustomers method
-                if (method_exists($ecom, 'getCustomers')) {
-                    // Call with correct parameters (filters array)
-                    $customers = $ecom->getCustomers([
-                        'limit' => $limit,
-                        'page' => $page,
-                    ]);
-                } else {
-                    // Fallback: If method doesn't exist, log and break
-                    Log::warning("FetchEcomCustomersJob [{$driverName}]: getCustomers() method not implemented in driver");
+                $batch = $ecom->getCustomers([
+                    'updated_at_min' => $since,  // cursor — only changed records
+                    'limit'          => $limit,
+                    'page'           => $page,
+                ]);
+
+                if (empty($batch)) {
                     break;
                 }
-                
-                if (empty($customers)) {
-                    break;
-                }
-                
-                $allCustomers = array_merge($allCustomers, $customers);
+
+                $all  = array_merge($all, $batch);
                 $page++;
-                
-                Log::info("FetchEcomCustomersJob [{$driverName}]: Fetched page {$page}, total: " . count($allCustomers));
-                
-                // Safety limit: Don't fetch more than 10,000 customers in one job
-                if (count($allCustomers) >= 10000) {
-                    Log::warning("FetchEcomCustomersJob [{$driverName}]: Reached 10k customer limit, stopping.");
+
+                // Safety cap
+                if (count($all) >= 10000) {
+                    Log::warning("FetchEcomCustomersJob [{$driver}]: reached 10k cap.");
                     break;
                 }
-                
-            } catch (\Exception $e) {
-                Log::error("FetchEcomCustomersJob [{$driverName}]: Error fetching page {$page}: " . $e->getMessage());
+            } catch (\Throwable $e) {
+                Log::error("FetchEcomCustomersJob [{$driver}]: page {$page} failed — " . $e->getMessage());
                 break;
             }
-            
-            // Continue if we got a full page (likely more exist)
-        } while (count($customers) === $limit);
-        
-        return $allCustomers;
+        } while (count($batch) === $limit);
+
+        return $all;
     }
 
-    public function failed(\Throwable $exception)
+    public function failed(\Throwable $exception): void
     {
-        // Reset the flag if job fails - FIX: use plural table name
-        SyncQueueState::where('sync_type', 'customers_pull')->update(['is_running' => false]);
+        SyncQueueState::forType('customers')->update(['is_running' => false]);
     }
 }

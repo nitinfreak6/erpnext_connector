@@ -2,8 +2,9 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
 class ProductCache extends Model
@@ -12,9 +13,9 @@ class ProductCache extends Model
 
     protected $fillable = [
         'odoo_id',
+        'erp_id',              // generic — added by migration
         'name',
         'default_code',
-        // ── New display columns ────────────────────────────
         'price',
         'cost',
         'weight',
@@ -23,27 +24,26 @@ class ProductCache extends Model
         'variant_count',
         'is_active',
         'product_type',
-        // ── Channel IDs ───────────────────────────────────
         'shopify_product_id',
+        'ecom_product_id',     // generic
         'shopify_handle',
         'amazon_asin',
-        // ── Statuses ──────────────────────────────────────
         'shopify_status',
+        'ecom_status',         // generic
         'amazon_status',
         'shopify_message',
+        'ecom_message',        // generic
         'amazon_message',
-        // ── Raw payload (replaces JSON file for reads) ────
         'raw_data',
-        // ── File path (kept for audit/backup only) ────────
         'file_path',
-        // ── Timestamps ────────────────────────────────────
         'fetched_at',
         'shopify_synced_at',
+        'ecom_synced_at',      // generic
         'amazon_synced_at',
     ];
 
     protected $casts = [
-        'raw_data'          => 'array',   // ← auto encode/decode JSON
+        'raw_data'          => 'array',
         'is_active'         => 'boolean',
         'price'             => 'float',
         'cost'              => 'float',
@@ -51,16 +51,99 @@ class ProductCache extends Model
         'variant_count'     => 'integer',
         'fetched_at'        => 'datetime',
         'shopify_synced_at' => 'datetime',
+        'ecom_synced_at'    => 'datetime',
         'amazon_synced_at'  => 'datetime',
     ];
 
-    // ── Status constants ─────────────────────────────────────────────────
     const STATUS_PENDING = 'pending';
     const STATUS_SENT    = 'sent';
     const STATUS_FAILED  = 'failed';
     const STATUS_SKIPPED = 'skipped';
 
-    // ── Scopes ───────────────────────────────────────────────────────────
+    // ── Column existence cache ────────────────────────────────────────────
+    // Checked once per request, avoids repeated SHOW COLUMNS calls.
+    private static ?bool $hasEcomColumns = null;
+
+    /**
+     * Returns true once the 2026_06_01_000003 migration has run.
+     * Safe to call before and after migration.
+     */
+    public static function hasEcomColumns(): bool
+    {
+        if (static::$hasEcomColumns === null) {
+            try {
+                static::$hasEcomColumns = Schema::hasColumn('product_cache', 'ecom_status');
+            } catch (\Throwable) {
+                static::$hasEcomColumns = false;
+            }
+        }
+        return static::$hasEcomColumns;
+    }
+
+    /**
+     * Returns the correct status column name for the ecom channel.
+     * Use this everywhere instead of hardcoding 'ecom_status' or 'shopify_status'.
+     */
+    public static function ecomStatusColumn(): string
+    {
+        return static::hasEcomColumns() ? 'ecom_status' : 'shopify_status';
+    }
+
+    public static function erpIdColumn(): string
+    {
+        return static::hasEcomColumns() ? 'erp_id' : 'odoo_id';
+    }
+
+    // ── Accessors ─────────────────────────────────────────────────────────
+
+    /**
+     * $cache->ecom_status — reads generic column if available, falls back.
+     */
+    public function getEcomStatusAttribute(): ?string
+    {
+        if (static::hasEcomColumns() && isset($this->attributes['ecom_status'])) {
+            return $this->attributes['ecom_status'];
+        }
+        return $this->attributes['shopify_status'] ?? null;
+    }
+
+    public function getErpIdAttribute(): ?int
+    {
+        if (static::hasEcomColumns() && isset($this->attributes['erp_id'])) {
+            return (int) $this->attributes['erp_id'];
+        }
+        return isset($this->attributes['odoo_id']) ? (int) $this->attributes['odoo_id'] : null;
+    }
+
+    public function getEcomProductIdAttribute(): ?string
+    {
+        if (static::hasEcomColumns() && isset($this->attributes['ecom_product_id'])) {
+            return $this->attributes['ecom_product_id'];
+        }
+        return $this->attributes['shopify_product_id'] ?? null;
+    }
+
+    public function getEcomSyncedAtAttribute()
+    {
+        if (static::hasEcomColumns() && isset($this->attributes['ecom_synced_at'])) {
+            return $this->attributes['ecom_synced_at']
+                ? \Carbon\Carbon::parse($this->attributes['ecom_synced_at'])
+                : null;
+        }
+        return isset($this->attributes['shopify_synced_at'])
+            ? \Carbon\Carbon::parse($this->attributes['shopify_synced_at'])
+            : null;
+    }
+
+    public function getEcomMessageAttribute(): ?string
+    {
+        if (static::hasEcomColumns() && isset($this->attributes['ecom_message'])) {
+            return $this->attributes['ecom_message'];
+        }
+        return $this->attributes['shopify_message'] ?? null;
+    }
+
+    // ── Scopes ────────────────────────────────────────────────────────────
 
     public function scopeSearch(Builder $query, string $term): Builder
     {
@@ -73,9 +156,13 @@ class ProductCache extends Model
         });
     }
 
-    public function scopeShopifyStatus(Builder $query, string $status): Builder
+    /**
+     * Filter by ecom status — works before and after migration.
+     */
+    public function scopeEcomStatus(Builder $query, string $status): Builder
     {
-        return $query->where('shopify_status', $status);
+        $col = static::ecomStatusColumn();
+        return $query->where($col, $status);
     }
 
     public function scopeAmazonStatus(Builder $query, string $status): Builder
@@ -88,45 +175,36 @@ class ProductCache extends Model
         return $query->where('is_active', true);
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────
+    // ── Status count helpers ──────────────────────────────────────────────
+    // These are the ONLY place that decides which column to query.
+    // All controllers should call these instead of writing raw ->where() calls.
 
-    /**
-     * Get variant data from raw_data (no file read needed).
-     */
-    public function getVariants(): array
+    public static function countEcomStatus(string $status): int
     {
-        return $this->raw_data['variants'] ?? [];
+        $col = static::ecomStatusColumn();
+        return static::where($col, $status)->count();
     }
 
-    /**
-     * Get attribute values from raw_data.
-     */
-    public function getAttributeValues(): array
+    public static function pendingEcomIds(): array
     {
-        return $this->raw_data['attribute_values'] ?? [];
+        $col = static::ecomStatusColumn();
+        $erpCol = static::erpIdColumn();
+        return static::where($col, '!=', 'sent')
+            ->orWhereNull($col)
+            ->pluck($erpCol)
+            ->map(fn($id) => (int) $id)
+            ->filter()
+            ->toArray();
     }
 
-    /**
-     * Get template data from raw_data.
-     */
-    public function getTemplate(): array
-    {
-        return $this->raw_data['template'] ?? [];
-    }
+    // ── Cache helpers ─────────────────────────────────────────────────────
 
-    /**
-     * Read the full cached product data.
-     * Prefers raw_data column (fast DB read).
-     * Falls back to JSON file only if raw_data is null (legacy records).
-     */
     public function readCache(): ?array
     {
-        // Fast path — data already in DB column
         if ($this->raw_data !== null) {
             return $this->raw_data;
         }
 
-        // Legacy fallback — read JSON file for old records
         if ($this->file_path && Storage::disk('local')->exists($this->file_path)) {
             $content = Storage::disk('local')->get($this->file_path);
             return $content ? json_decode($content, true) : null;
@@ -135,9 +213,6 @@ class ProductCache extends Model
         return null;
     }
 
-    /**
-     * Check if this product has usable cached data.
-     */
     public function cacheExists(): bool
     {
         if ($this->raw_data !== null) {
@@ -146,12 +221,14 @@ class ProductCache extends Model
         return $this->file_path && Storage::disk('local')->exists($this->file_path);
     }
 
-    /**
-     * CSS classes for status badges.
-     */
     public function statusBadgeClass(string $channel): string
     {
-        $status = $channel === 'shopify' ? $this->shopify_status : $this->amazon_status;
+        $status = match($channel) {
+            'ecom'   => $this->ecom_status,
+            'shopify'=> $this->attributes['shopify_status'] ?? $this->ecom_status,
+            'amazon' => $this->attributes['amazon_status'] ?? null,
+            default  => null,
+        };
 
         return match ($status) {
             self::STATUS_SENT    => 'bg-emerald-100 text-emerald-700',
@@ -161,9 +238,6 @@ class ProductCache extends Model
         };
     }
 
-    /**
-     * JSON file still exists on disk (for audit/backup check).
-     */
     public function fileExists(): bool
     {
         return $this->file_path && Storage::disk('local')->exists($this->file_path);

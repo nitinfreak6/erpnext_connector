@@ -3,118 +3,93 @@
 namespace App\Services;
 
 use App\Models\ProductCache;
-use App\Services\Odoo\OdooProductService;
-use App\Services\Odoo\OdooService;
+use App\Services\Erp\ErpInterface;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class ProductCacheService
 {
-    private const DISK      = 'local';
-    private const BASE_DIR  = 'products';
+    private const DISK     = 'local';
+    private const BASE_DIR = 'products';
 
-    public function __construct(
-        private readonly OdooService        $odoo,
-        private readonly OdooProductService $odooProducts,
-    ) {}
+    public function __construct(private readonly ErpInterface $erp) {}
 
-    // ── Fetch & Cache ────────────────────────────────────────────────────
+    // ── Fetch & Cache ─────────────────────────────────────────────────────
 
-    /**
-     * Fetch ALL active product templates from Odoo and cache each to a JSON file.
-     * Returns count of products fetched.
-     */
     public function fetchAndCacheAll(): int
     {
-        $templates = $this->odoo->searchRead(
-            'product.template',
-            [['sale_ok', '=', true], ['active', '=', true]],
-            ['id', 'name', 'default_code', 'description_sale', 'list_price',
-             'standard_price', 'weight', 'categ_id', 'barcode',
-             'website_meta_keywords', 'attribute_line_ids', 'product_variant_ids',
-             'type', 'active', 'sale_ok'],
-            ['limit' => 500]
-        );
+        $offset   = 0;
+        $pageSize = 100;
+        $count    = 0;
 
-        $count = 0;
+        do {
+            $templates = $this->erp->getAllActiveProducts($offset, $pageSize);
 
-        foreach ($templates as $template) {
-            try {
-                $this->cacheProduct($template);
-                $count++;
-            } catch (\Throwable $e) {
-                Log::error("ProductCacheService: failed to cache product #{$template['id']}: " . $e->getMessage());
+            foreach ($templates as $template) {
+                try {
+                    $this->cacheProduct($template);
+                    $count++;
+                } catch (\Throwable $e) {
+                    Log::error("ProductCacheService: failed to cache product #{$template['id']}: " . $e->getMessage());
+                }
             }
-        }
+
+            $offset += count($templates);
+        } while (count($templates) === $pageSize);
 
         return $count;
     }
 
-    /**
-     * Fetch and cache a single product template by Odoo ID.
-     */
-    public function fetchAndCacheSingle(int $odooId): ProductCache
+    public function fetchAndCacheSingle(int $erpId): ProductCache
     {
-        $templates = $this->odoo->searchRead(
-            'product.template',
-            [['id', '=', $odooId]],
-            ['id', 'name', 'default_code', 'description_sale', 'list_price',
-             'standard_price', 'weight', 'categ_id', 'barcode',
-             'website_meta_keywords', 'attribute_line_ids', 'product_variant_ids',
-             'type', 'active', 'sale_ok']
-        );
+        $product = $this->erp->getProductById($erpId);
 
-        if (empty($templates)) {
-            throw new \RuntimeException("Odoo product #{$odooId} not found.");
+        if (!$product) {
+            throw new \RuntimeException("ERP product #{$erpId} not found in {$this->erp->driverName()}.");
         }
 
-        return $this->cacheProduct($templates[0]);
+        return $this->cacheProduct($product);
     }
 
-    /**
-     * Cache a single product template with its variants to a JSON file.
-     */
     public function cacheProduct(array $template): ProductCache
     {
-        $odooId   = $template['id'];
-        $variants = $this->odooProducts->getVariantsForTemplates([$odooId]);
+        $erpId = (int) $template['id'];
 
-        // Fetch attribute values for variants
+        $variants = $this->erp->getVariantsForProducts([$erpId]);
+
         $avIds = [];
         foreach ($variants as $v) {
             $avIds = array_merge($avIds, $v['product_template_attribute_value_ids'] ?? []);
         }
+
         $attributeValues = $avIds
-            ? $this->odooProducts->getAttributeValues(array_unique($avIds))
+            ? $this->erp->getAttributeValues(array_unique($avIds))
             : [];
 
-        // Fetch product attributes (custom fields like HSN, color etc.)
-        $productAttributes = $this->odooProducts->getProductAttributes($odooId);
-
-        // Build full data structure
         $data = [
-            'fetched_at'         => now()->toISOString(),
-            'odoo_id'            => $odooId,
-            'template'           => $template,
-            'variants'           => $variants,
-            'attribute_values'   => $attributeValues,
-            'product_attributes' => $productAttributes,
+            'fetched_at'       => now()->toISOString(),
+            'erp_id'           => $erpId,
+            'odoo_id'          => $erpId,
+            'template'         => $template,
+            'variants'         => $variants,
+            'attribute_values' => $attributeValues,
         ];
 
-        // Write to storage/app/products/{odoo_id}.json (audit/backup only)
-        $filePath = self::BASE_DIR . "/{$odooId}.json";
+        $filePath = self::BASE_DIR . "/{$erpId}.json";
         Storage::disk(self::DISK)->put($filePath, json_encode($data, JSON_PRETTY_PRINT));
 
-        // Extract category name from [id, "All / Saleable"] tuple
         $categoryName = '';
         if (!empty($template['categ_id']) && is_array($template['categ_id'])) {
             $categoryName = $template['categ_id'][1] ?? '';
         }
 
-        // Upsert DB record — all display columns populated here
+        $erpIdCol = ProductCache::hasEcomColumns() ? 'erp_id' : 'odoo_id';
+
         $cache = ProductCache::updateOrCreate(
-            ['odoo_id' => $odooId],
+            [$erpIdCol => $erpId],
             [
+                'odoo_id'       => $erpId,
+                'erp_id'        => $erpId,
                 'name'          => $template['name'],
                 'default_code'  => $template['default_code'] ?: null,
                 'barcode'       => $template['barcode'] ?: null,
@@ -125,26 +100,23 @@ class ProductCacheService
                 'weight'        => $template['weight'] ?? null,
                 'category'      => $categoryName ?: null,
                 'variant_count' => count($variants),
-                'raw_data'      => $data,   // ← entire payload in DB, no file reads needed
+                'raw_data'      => $data,
                 'file_path'     => $filePath,
                 'fetched_at'    => now(),
             ]
         );
 
-        Log::info("ProductCacheService: cached product #{$odooId} ({$template['name']})");
+        Log::info("ProductCacheService [{$this->erp->driverName()}]: cached #{$erpId} ({$template['name']})");
 
         return $cache;
     }
 
-    // ── Read from cache ──────────────────────────────────────────────────
+    // ── Read ──────────────────────────────────────────────────────────────
 
-    /**
-     * Read a cached product by Odoo ID.
-     * Returns null if not cached yet.
-     */
-    public function read(int $odooId): ?array
+    public function read(int $erpId): ?array
     {
-        $cache = ProductCache::where('odoo_id', $odooId)->first();
+        $col   = ProductCache::erpIdColumn();
+        $cache = ProductCache::where($col, $erpId)->first();
 
         if (!$cache || !$cache->cacheExists()) {
             return null;
@@ -153,74 +125,86 @@ class ProductCacheService
         return $cache->readCache();
     }
 
-    /**
-     * Read cached product — throw if not found.
-     */
-    public function readOrFail(int $odooId): array
+    public function readOrFail(int $erpId): array
     {
-        $data = $this->read($odooId);
+        $data = $this->read($erpId);
 
         if (!$data) {
-            // Auto-fetch if not cached
-            $cache = $this->fetchAndCacheSingle($odooId);
+            $cache = $this->fetchAndCacheSingle($erpId);
             $data  = $cache->readCache();
         }
 
         return $data;
     }
 
-    // ── Status updates ───────────────────────────────────────────────────
+    // ── Status updates ────────────────────────────────────────────────────
 
-    public function markShopifySent(int $odooId, string $shopifyProductId): void
+    public function markEcomSent(int $erpId, string $ecomProductId): void
     {
-        ProductCache::where('odoo_id', $odooId)->update([
+        $col = ProductCache::erpIdColumn();
+        ProductCache::where($col, $erpId)->update([
+            'ecom_status'        => ProductCache::STATUS_SENT,
+            'ecom_product_id'    => $ecomProductId,
+            'ecom_message'       => null,
+            'ecom_synced_at'     => now(),
             'shopify_status'     => ProductCache::STATUS_SENT,
-            'shopify_product_id' => $shopifyProductId,
-            'shopify_message'    => null,
+            'shopify_product_id' => $ecomProductId,
             'shopify_synced_at'  => now(),
         ]);
     }
 
-    public function markShopifyFailed(int $odooId, string $message): void
+    public function markEcomFailed(int $erpId, string $message): void
     {
-        ProductCache::where('odoo_id', $odooId)->update([
-            'shopify_status'  => ProductCache::STATUS_FAILED,
-            'shopify_message' => $message,
+        $col = ProductCache::erpIdColumn();
+        ProductCache::where($col, $erpId)->update([
+            'ecom_status'    => ProductCache::STATUS_FAILED,
+            'ecom_message'   => $message,
+            'shopify_status' => ProductCache::STATUS_FAILED,
+            'shopify_message'=> $message,
         ]);
     }
 
-    public function markAmazonSent(int $odooId, string $message = ''): void
+    public function markShopifySent(int $erpId, string $shopifyProductId): void
     {
-        ProductCache::where('odoo_id', $odooId)->update([
-            'amazon_status'     => ProductCache::STATUS_SENT,
-            'amazon_message'    => $message,
-            'amazon_synced_at'  => now(),
+        $this->markEcomSent($erpId, $shopifyProductId);
+    }
+
+    public function markShopifyFailed(int $erpId, string $message): void
+    {
+        $this->markEcomFailed($erpId, $message);
+    }
+
+    public function markAmazonSent(int $erpId, string $message = ''): void
+    {
+        $col = ProductCache::erpIdColumn();
+        ProductCache::where($col, $erpId)->orWhere('odoo_id', $erpId)->update([
+            'amazon_status'    => ProductCache::STATUS_SENT,
+            'amazon_message'   => $message,
+            'amazon_synced_at' => now(),
         ]);
     }
 
-    public function markAmazonFailed(int $odooId, string $message): void
+    public function markAmazonFailed(int $erpId, string $message): void
     {
-        ProductCache::where('odoo_id', $odooId)->update([
+        $col = ProductCache::erpIdColumn();
+        ProductCache::where($col, $erpId)->orWhere('odoo_id', $erpId)->update([
             'amazon_status'  => ProductCache::STATUS_FAILED,
             'amazon_message' => $message,
         ]);
     }
 
-    /**
-     * Delete cache file and DB record for a product.
-     */
-    public function clearCache(int $odooId): void
+    public function clearCache(int $erpId): void
     {
-        $cache = ProductCache::where('odoo_id', $odooId)->first();
+        $col   = ProductCache::erpIdColumn();
+        $cache = ProductCache::where($col, $erpId)->first();
         if ($cache) {
-            Storage::disk(self::DISK)->delete($cache->file_path);
+            if ($cache->file_path) {
+                Storage::disk(self::DISK)->delete($cache->file_path);
+            }
             $cache->delete();
         }
     }
 
-    /**
-     * Clear ALL cached products.
-     */
     public function clearAll(): int
     {
         $count = ProductCache::count();

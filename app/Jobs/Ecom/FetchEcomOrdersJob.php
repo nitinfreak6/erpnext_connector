@@ -3,10 +3,12 @@
 namespace App\Jobs\Ecom;
 
 use App\Models\SyncMapping;
+use App\Models\SyncQueueState;
 use App\Services\Ecom\EcomInterface;
-use App\Services\Erp\ErpInterface;
+use App\Services\SettingsService;
 use App\Services\Sync\OrderSyncService;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -14,91 +16,106 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
 /**
- * FetchEcomOrdersJob
- * 
- * Pulls new/updated orders FROM ecom platform TO ERP.
- * Direction: ecom_to_erp
+ * Pull NEW and UPDATED orders from ecom → ERP.
+ *
+ * Cursor: last_ecom_write_date in sync_queue_state (type = 'orders').
+ * On first run the cursor is null → fetches last 30 days as a safe bootstrap.
+ * After each run the cursor is advanced to now() so next run only gets changes.
  */
-class FetchEcomOrdersJob implements ShouldQueue
+class FetchEcomOrdersJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public int $uniqueFor  = 300;
+    public int $timeout    = 600;
 
     public function __construct()
     {
         $this->onQueue('sync');
     }
 
-    public function handle(
-        EcomInterface $ecom,
-        ErpInterface $erp,
-        OrderSyncService $orderSync
-    ): void {
-        $settings = app(\App\Services\SettingsService::class);
-        $syncMode = $settings->salesOrderSyncMode();
-        
-        // Only run if mode includes Ecom → ERP direction
-        if ($syncMode === 'erp_to_ecom') {
-            Log::info('FetchEcomOrdersJob: Skipped (mode is erp_to_ecom)');
+    public function handle(EcomInterface $ecom, SettingsService $settings, OrderSyncService $orderSync): void
+    {
+        if (!$settings->isSalesOrderSyncEnabled()) {
+            Log::info('FetchEcomOrdersJob: skipped — order sync disabled.');
             return;
         }
-        
+
+        $syncMode = $settings->salesOrderSyncMode();
+
+        if ($syncMode === 'erp_to_ecom') {
+            Log::info('FetchEcomOrdersJob: skipped — mode is erp_to_ecom.');
+            return;
+        }
+
+        $state = SyncQueueState::forType('orders');
+
+        if ($state->is_running && $state->run_started_at?->gt(now()->subMinutes(10))) {
+            Log::warning('FetchEcomOrdersJob: previous run still active, skipping.');
+            return;
+        }
+
+        $state->markRunning();
         $driver = $ecom->driverName();
-        Log::info("FetchEcomOrdersJob [{$driver}]: Starting order import, mode={$syncMode}");
 
         try {
-            // Fetch orders from ecom platform (last 30 days for initial run)
+            // Cursor: use last_ecom_write_date so only NEW/UPDATED records are fetched
+            $since = $state->last_ecom_write_date ?? now()->subDays(30)->toIso8601String();
+
+            Log::info("FetchEcomOrdersJob [{$driver}]: fetching orders updated since {$since}");
+
             $orders = $ecom->getOrders([
-                'status' => 'any',
-                'created_at_min' => now()->subDays(30)->toIso8601String(),
-                'limit' => 50,
+                'status'           => 'any',
+                'updated_at_min'   => $since,   // only changed records — reduces API load
             ]);
 
-            Log::info("FetchEcomOrdersJob [{$driver}]: Found " . count($orders) . " orders");
+            Log::info("FetchEcomOrdersJob [{$driver}]: found " . count($orders) . ' orders.');
 
-            // Debug: Log orders structure
-            if (!empty($orders)) {
-                $firstOrder = reset($orders); // Get first element safely
-                if (is_array($firstOrder)) {
-                    Log::debug("FetchEcomOrdersJob [{$driver}]: First order keys", ['keys' => array_keys($firstOrder)]);
-                } else {
-                    Log::debug("FetchEcomOrdersJob [{$driver}]: Orders structure", ['type' => gettype($orders), 'orders' => $orders]);
-                }
-            }
-
-            $synced = 0;
+            $synced  = 0;
             $skipped = 0;
-            $failed = 0;
+            $failed  = 0;
 
             foreach ($orders as $order) {
                 try {
-                    $ecomId = (string) ($order['id'] ?? 'unknown');
-                    
-                    // Check if already mapped
+                    $ecomId = (string) ($order['id'] ?? '');
+
+                    if (!$ecomId) {
+                        continue;
+                    }
+
                     $mapping = SyncMapping::where('entity_type', 'order')
                         ->where('ecom_id', $ecomId)
                         ->first();
 
                     if ($mapping) {
-                        Log::debug("FetchEcomOrdersJob [{$driver}]: Order {$ecomId} already mapped to ERP #{$mapping->erp_id}, skipping");
+                        // Already mapped — check if it needs a status update
+                        $orderSync->updateOrderInErp($order, $mapping);
                         $skipped++;
-                        continue;
+                    } else {
+                        // New order — create in ERP
+                        $orderSync->importOrderToErp($order);
+                        $synced++;
                     }
-
-                    // Import to ERP
-                    $orderSync->importOrderToErp($order);
-                    $synced++;
-
                 } catch (\Throwable $e) {
-                    $orderId = $order['id'] ?? $order['name'] ?? 'unknown';
-                    Log::error("FetchEcomOrdersJob [{$driver}]: Failed to import order {$orderId}: " . $e->getMessage());
+                    Log::error("FetchEcomOrdersJob [{$driver}]: failed for order " . ($order['id'] ?? '?') . ': ' . $e->getMessage());
                     $failed++;
                 }
             }
 
-            Log::info("FetchEcomOrdersJob [{$driver}]: Completed. Imported: {$synced}, Skipped: {$skipped}, Failed: {$failed}");
+            // Advance cursor to now so next run only fetches changes after this point
+            $state->update([
+                'is_running'           => false,
+                'last_poll_at'         => now(),
+                'last_ecom_write_date' => now()->toIso8601String(),
+                'run_started_at'       => null,
+                'notes'                => "Synced: {$synced}, Updated: {$skipped}, Failed: {$failed}",
+            ]);
+
+            Log::info("FetchEcomOrdersJob [{$driver}]: done. Synced: {$synced}, Updated: {$skipped}, Failed: {$failed}");
 
         } catch (\Throwable $e) {
-            Log::error("FetchEcomOrdersJob [{$driver}]: Job failed: " . $e->getMessage());
+            $state->update(['is_running' => false, 'notes' => $e->getMessage()]);
+            Log::error("FetchEcomOrdersJob [{$driver}]: job failed — " . $e->getMessage());
             throw $e;
         }
     }

@@ -5,10 +5,9 @@ namespace App\Http\Controllers\Dashboard;
 use App\Http\Controllers\Controller;
 use App\Jobs\Ecom\FetchEcomProductsJob;
 use App\Jobs\Erp\FetchErpProductsJob;
-use App\Jobs\Shopify\PushProductToShopifyJob;
 use App\Models\ProductCache;
-use App\Models\SyncMapping;
 use App\Models\SyncLog;
+use App\Models\SyncMapping;
 use App\Services\SettingsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,328 +18,185 @@ class ProductsController extends Controller
         private readonly SettingsService $settings,
     ) {}
 
-    /**
-     * Products index - adapts to current sync direction
-     */
     public function index(Request $request)
     {
-        $syncMode = $this->settings->productSyncMode();
-        $search = $request->input('search', '');
-        $status = $request->input('status', 'all');
-        $perPage = (int) $request->input('per_page', 25);
-        $direction = $request->input('direction', 'erp_to_ecom'); // For bidirectional mode
+        $syncMode  = $this->settings->productSyncMode();
+        $search    = $request->input('search', '');
+        $status    = $request->input('status', 'all');
+        $perPage   = (int) $request->input('per_page', 25);
+        $direction = $request->input('direction', 'erp_to_ecom');
 
-        // Get products based on sync mode
         $products = match($syncMode) {
-            'erp_to_ecom' => $this->getErpToEcomProducts($search, $status, $perPage),
-            'ecom_to_erp' => $this->getEcomToErpProducts($search, $status, $perPage),
+            'erp_to_ecom'   => $this->getErpToEcomProducts($search, $status, $perPage),
+            'ecom_to_erp'   => $this->getEcomToErpProducts($search, $status, $perPage),
             'bidirectional' => $this->getBidirectionalProducts($search, $status, $perPage, $direction),
-            default => collect([]),
+            default         => collect([]),
         };
 
-        // Get stats based on sync mode
         $stats = match($syncMode) {
-            'erp_to_ecom' => $this->getErpToEcomStats(),
-            'ecom_to_erp' => $this->getEcomToErpStats(),
+            'erp_to_ecom'   => $this->getErpToEcomStats(),
+            'ecom_to_erp'   => $this->getEcomToErpStats(),
             'bidirectional' => $this->getBidirectionalStats(),
-            default => [],
+            default         => [],
         };
 
-        $ecomDriver = $this->settings->ecomDriver();
+        $ecomDriver   = $this->settings->ecomDriver();
         $shopifyStore = $this->settings->shopifyShop() ?: config('shopify.shop', '—');
 
         return view('dashboard.products', compact(
-            'products', 'search', 'status', 'perPage', 'stats', 
+            'products', 'search', 'status', 'perPage', 'stats',
             'syncMode', 'ecomDriver', 'shopifyStore', 'direction'
         ));
     }
 
-    /**
-     * Get products for ERP → Ecom direction (from product_cache)
-     */
-    private function getErpToEcomProducts(?string $search, string $status, int $perPage)
-    {
-        $query = ProductCache::query()->orderByDesc('fetched_at');
+    // ── Fetch: ERP → cache (incremental, new/updated only) ───────────────────
 
-        if ($search) {
-            $query->search($search);
-        }
-
-        if ($status === 'sent') {
-            $query->where('shopify_status', 'sent');
-        } elseif ($status === 'failed') {
-            $query->where('shopify_status', 'failed');
-        } elseif ($status === 'pending') {
-            $query->where('shopify_status', 'pending');
-        }
-
-        return $query->paginate($perPage)->withQueryString();
-    }
-
-    /**
-     * Get products for Ecom → ERP direction (from sync_mappings)
-     */
-    private function getEcomToErpProducts(?string $search, string $status, int $perPage)
-    {
-        $query = SyncMapping::where('sync_mappings.entity_type', 'product')
-            ->whereIn('sync_mappings.last_sync_direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
-            ->orderByDesc('sync_mappings.last_synced_at');
-
-        if ($search) {
-            $query->where(function($q) use ($search) {
-                $q->where('sync_mappings.ecom_id', 'like', "%{$search}%")
-                  ->orWhere('sync_mappings.erp_id', 'like', "%{$search}%")
-                  ->orWhere('sync_mappings.ecom_handle', 'like', "%{$search}%");
-            });
-        }
-        
-        // Join with product_cache to get product name
-        $query->leftJoin('product_cache', function($join) {
-            $join->on('product_cache.odoo_id', '=', DB::raw('CAST(sync_mappings.erp_id AS UNSIGNED)'));
-        });
-        
-        // Select columns
-        $query->select([
-            'sync_mappings.*',
-            'product_cache.name as product_name',
-            'product_cache.default_code as sku',
-        ]);
-
-        // Status filter
-        if ($status !== 'all') {
-            $query->whereExists(function($q) use ($status) {
-                $q->select(DB::raw(1))
-                  ->from('sync_logs')
-                  ->whereColumn('sync_logs.entity_id', 'sync_mappings.ecom_id')
-                  ->where('sync_logs.entity_type', 'product')
-                  ->whereIn('sync_logs.direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
-                  ->where('sync_logs.status', $status)
-                  ->orderByDesc('sync_logs.created_at')
-                  ->limit(1);
-            });
-        }
-
-        $results = $query->paginate($perPage)->withQueryString();
-        
-        // Load latest log status for each product
-        $results->getCollection()->transform(function($product) {
-            $latestLog = SyncLog::where('entity_id', $product->ecom_id)
-                ->where('entity_type', 'product')
-                ->whereIn('direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
-                ->latest()
-                ->first();
-            
-            $product->latest_log_status = $latestLog?->status ?? 'pending';
-            return $product;
-        });
-
-        return $results;
-    }
-
-    /**
-     * Get products for bidirectional mode
-     */
-    private function getBidirectionalProducts(?string $search, string $status, int $perPage, string $direction)
-    {
-        if ($direction === 'ecom_to_erp') {
-            return $this->getEcomToErpProducts($search, $status, $perPage);
-        }
-        
-        return $this->getErpToEcomProducts($search, $status, $perPage);
-    }
-
-    /**
-     * Stats for ERP → Ecom
-     */
-    private function getErpToEcomStats(): array
-    {
-        return [
-            'total' => ProductCache::count(),
-            'sent' => ProductCache::where('shopify_status', 'sent')->count(),
-            'failed' => ProductCache::where('shopify_status', 'failed')->count(),
-            'pending' => ProductCache::where('shopify_status', 'pending')->count(),
-        ];
-    }
-
-    /**
-     * Stats for Ecom → ERP
-     */
-    private function getEcomToErpStats(): array
-    {
-        $total = SyncMapping::where('entity_type', 'product')
-            ->whereIn('last_sync_direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
-            ->count();
-
-        $success = DB::table('sync_mappings')
-            ->join('sync_logs', function($join) {
-                $join->on('sync_logs.entity_id', '=', 'sync_mappings.ecom_id')
-                     ->where('sync_logs.entity_type', 'product')
-                     ->whereIn('sync_logs.direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
-                     ->whereRaw('sync_logs.id = (
-                         SELECT id FROM sync_logs sl2 
-                         WHERE sl2.entity_id = sync_mappings.ecom_id 
-                         AND sl2.entity_type = "product"
-                         AND sl2.direction IN ("ecom_to_erp", "shopify_to_erp", "shopify_to_odoo")
-                         ORDER BY created_at DESC LIMIT 1
-                     )');
-            })
-            ->where('sync_logs.status', 'success')
-            ->count();
-
-        $failed = DB::table('sync_mappings')
-            ->join('sync_logs', function($join) {
-                $join->on('sync_logs.entity_id', '=', 'sync_mappings.ecom_id')
-                     ->where('sync_logs.entity_type', 'product')
-                     ->whereIn('sync_logs.direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
-                     ->whereRaw('sync_logs.id = (
-                         SELECT id FROM sync_logs sl2 
-                         WHERE sl2.entity_id = sync_mappings.ecom_id 
-                         AND sl2.entity_type = "product"
-                         AND sl2.direction IN ("ecom_to_erp", "shopify_to_erp", "shopify_to_odoo")
-                         ORDER BY created_at DESC LIMIT 1
-                     )');
-            })
-            ->where('sync_logs.status', 'failed')
-            ->count();
-
-        return [
-            'total' => $total,
-            'success' => $success,
-            'failed' => $failed,
-            'pending' => max(0, $total - $success - $failed),
-        ];
-    }
-
-    /**
-     * Stats for bidirectional
-     */
-    private function getBidirectionalStats(): array
-    {
-        $erpToEcom = $this->getErpToEcomStats();
-        $ecomToErp = $this->getEcomToErpStats();
-
-        return [
-            'erp_to_ecom' => $erpToEcom,
-            'ecom_to_erp' => $ecomToErp,
-            'total' => $erpToEcom['total'] + $ecomToErp['total'],
-        ];
-    }
-
-    /**
-     * Fetch products FROM ERP (Odoo → Shopify direction)
-     */
     public function fetch()
     {
         $syncMode = $this->settings->productSyncMode();
 
         if ($syncMode === 'ecom_to_erp') {
-            return back()->with('error', 'Cannot fetch from ERP when sync mode is Ecom → ERP. Change sync direction first.');
+            return back()->with('error', 'Sync mode is Ecom → ERP. Use Pull instead.');
         }
 
-        FetchErpProductsJob::dispatchSync(fullSync: true, shopify: false, amazon: false);
-        return back()->with('success', 'Products fetched from ERP successfully.');
+        // FIX: correct signature — no shopify/amazon params
+        FetchErpProductsJob::dispatch(fullSync: false)->onQueue('sync');
+
+        return back()->with('success', 'Incremental ERP fetch queued (new/updated products only).');
     }
 
-    /**
-     * Pull products FROM Ecom platform (Shopify → Odoo direction)
-     */
+    // ── Pull: ecom → ERP (incremental, new/updated only) ─────────────────────
+
     public function pull()
     {
         $syncMode = $this->settings->productSyncMode();
 
         if ($syncMode === 'erp_to_ecom') {
-            return back()->with('error', 'Cannot pull from Ecom when sync mode is ERP → Ecom. Change sync direction first.');
+            return back()->with('error', 'Sync mode is ERP → Ecom. Use Fetch instead.');
         }
 
-        FetchEcomProductsJob::dispatch();
-        return back()->with('success', 'Pull from ' . ucfirst($this->settings->ecomDriver()) . ' queued successfully.');
+        FetchEcomProductsJob::dispatch(fullSync: false)->onQueue('sync');
+
+        return back()->with('success',
+            'Incremental pull from ' . $this->settings->ecomDisplayName() . ' queued (new/updated only).'
+        );
     }
 
-    /**
-     * Push products TO Ecom platform
-     */
+    // ── Post all: push all cached products to ecom ────────────────────────────
+
     public function postAll(Request $request)
     {
         $syncMode = $this->settings->productSyncMode();
 
         if ($syncMode === 'ecom_to_erp') {
-            return back()->with('error', 'Cannot push to Ecom when sync mode is Ecom → ERP. Change sync direction first.');
+            return back()->with('error', 'Sync mode is Ecom → ERP. Products flow the other direction.');
         }
 
-        $odooIds = ProductCache::pluck('odoo_id')->toArray();
-        $queued = 0;
+        // Resolve active ecom push job from driver
+        $ecomDriver = $this->settings->ecomDriver();
+        $ecomJobMap = [
+            'shopify' => \App\Jobs\Ecom\PushProductToEcomJob::class,
+            // 'woocommerce' => \App\Jobs\WooCommerce\PushProductToWooCommerceJob::class,
+        ];
 
-        foreach ($odooIds as $odooId) {
-            PushProductToShopifyJob::dispatch((int) $odooId);
+        if (!isset($ecomJobMap[$ecomDriver])) {
+            return back()->with('error', "No push job registered for ecom driver [{$ecomDriver}].");
+        }
+
+        $ecomJobClass  = $ecomJobMap[$ecomDriver];
+        $amazonEnabled = $this->settings->isAmazonChannelEnabled();
+
+        // FIX: use erp_id ?? odoo_id generically
+        $erpCol = ProductCache::erpIdColumn();
+        $erpIds = ProductCache::pluck($erpCol)
+            ->map(fn($id) => (int) $id)
+            ->filter()
+            ->toArray();
+
+        $queued = 0;
+        foreach ($erpIds as $erpId) {
+            $ecomJobClass::dispatch($erpId)->onQueue('sync');
+            if ($amazonEnabled) {
+                \App\Jobs\Amazon\PushProductToAmazonJob::dispatch($erpId)->onQueue('sync');
+            }
             $queued++;
         }
 
-        return back()->with('success', "Queued {$queued} products for push to " . ucfirst($this->settings->ecomDriver()));
+        return back()->with('success', "Queued {$queued} products for push to " . $this->settings->ecomDisplayName() . '.');
     }
 
-    /**
-     * Product detail view
-     */
-    public function show(int $odooId)
+    // ── Show product detail ───────────────────────────────────────────────────
+
+    public function show(int $erpId)
     {
         $syncMode = $this->settings->productSyncMode();
 
         if ($syncMode === 'erp_to_ecom' || $syncMode === 'bidirectional') {
-            return $this->showErpToEcom($odooId);
+            return $this->showErpToEcom($erpId);
         }
 
-        return $this->showEcomToErp($odooId);
+        return $this->showEcomToErp($erpId);
     }
 
-    private function showErpToEcom(int $odooId)
+    private function showErpToEcom(int $erpId)
     {
-        $productCache = ProductCache::where('odoo_id', $odooId)->first();
+        // FIX: look up by erp_id OR odoo_id for backwards compat
+        $productCache = ProductCache::where('erp_id', $erpId)
+            ->orWhere('odoo_id', $erpId)
+            ->first();
 
         if (!$productCache || !$productCache->cacheExists()) {
-            return back()->with('error', "No cached data for product #{$odooId}.");
+            return back()->with('error', "No cached data for product #{$erpId}.");
         }
 
         $data = $productCache->readCache();
 
         $syncLog = SyncLog::where('entity_type', 'product')
-            ->where('entity_id', (string) $odooId)
+            ->where('entity_id', (string) $erpId)
             ->whereIn('direction', ['erp_to_ecom', 'odoo_to_shopify', 'erp_to_shopify'])
             ->latest()
             ->first();
 
-        // Build Shopify payload preview (for compatibility with old view)
-        $shopifyPayload = [];
+        // Build ecom payload preview
+        $ecomPayload    = [];
+        $shopifyPayload = []; // keep old var name for blade compat
         try {
             $shopifyService = app(\App\Services\Shopify\ShopifyProductService::class);
-            $shopifyPayload = $shopifyService->buildPayload(
+            $ecomPayload    = $shopifyService->buildPayload(
                 $data['template']         ?? [],
                 $data['variants']         ?? [],
                 $data['attribute_values'] ?? [],
             );
+            $shopifyPayload = $ecomPayload; // blade still references shopifyPayload
         } catch (\Throwable $e) {
-            $shopifyPayload = ['_error' => $e->getMessage()];
+            $ecomPayload    = ['_error' => $e->getMessage()];
+            $shopifyPayload = $ecomPayload;
         }
 
-        // Get Shopify response from sync log
+        $ecomResponse    = null;
         $shopifyResponse = null;
         if ($syncLog?->response_payload) {
-            $shopifyResponse = json_decode($syncLog->response_payload, true) ?? $syncLog->response_payload;
+            $ecomResponse    = json_decode($syncLog->response_payload, true) ?? $syncLog->response_payload;
+            $shopifyResponse = $ecomResponse;
         }
 
+        $odooId = $erpId; // blade still references $odooId in some places
+
         return view('dashboard.products-detail', compact(
-            'odooId', 'data', 'productCache', 'syncLog', 'shopifyPayload', 'shopifyResponse'
+            'erpId', 'odooId', 'data', 'productCache', 'syncLog',
+            'ecomPayload', 'shopifyPayload', 'ecomResponse', 'shopifyResponse'
         ));
     }
 
-    private function showEcomToErp(int $odooId)
+    private function showEcomToErp(int $erpId)
     {
         $mapping = SyncMapping::where('entity_type', 'product')
-            ->where('erp_id', (string) $odooId)
+            ->where('erp_id', (string) $erpId)
             ->where('last_sync_direction', 'ecom_to_erp')
             ->first();
 
         if (!$mapping) {
-            return back()->with('error', "No mapping found for product #{$odooId}.");
+            return back()->with('error', "No mapping found for product #{$erpId}.");
         }
 
         $syncLog = SyncLog::where('entity_type', 'product')
@@ -352,43 +208,185 @@ class ProductsController extends Controller
         return view('dashboard.products-detail-ecom', compact('mapping', 'syncLog'));
     }
 
-    /**
-     * Fetch single product
-     */
-    public function fetchSingle(int $odooId)
-    {
-        $syncMode = $this->settings->productSyncMode();
+    // ── Single product actions ─────────────────────────────────────────────────
 
-        if ($syncMode === 'ecom_to_erp') {
+    public function fetchSingle(int $erpId)
+    {
+        if ($this->settings->productSyncMode() === 'ecom_to_erp') {
             return back()->with('error', 'Cannot fetch from ERP in Ecom → ERP mode.');
         }
 
         try {
-            $cacheService = app(\App\Services\ProductCacheService::class);
-            $cacheService->fetchAndCacheSingle($odooId);
-            return back()->with('success', "Product #{$odooId} fetched from ERP.");
+            app(\App\Services\ProductCacheService::class)->fetchAndCacheSingle($erpId);
+            return back()->with('success', "Product #{$erpId} fetched from " . $this->settings->erpDisplayName() . '.');
         } catch (\Throwable $e) {
-            return back()->with('error', "Fetch failed: " . $e->getMessage());
+            return back()->with('error', 'Fetch failed: ' . $e->getMessage());
         }
     }
 
-    /**
-     * Push single product
-     */
-    public function postSingle(int $odooId)
+    public function postSingle(int $erpId)
     {
-        $syncMode = $this->settings->productSyncMode();
-
-        if ($syncMode === 'ecom_to_erp') {
+        if ($this->settings->productSyncMode() === 'ecom_to_erp') {
             return back()->with('error', 'Cannot push to Ecom in Ecom → ERP mode.');
         }
 
-        PushProductToShopifyJob::dispatchSync($odooId);
-        return back()->with('success', "Product #{$odooId} pushed successfully.");
+        $ecomDriver = $this->settings->ecomDriver();
+        $ecomJobMap = [
+            'shopify' => \App\Jobs\Ecom\PushProductToEcomJob::class,
+        ];
+
+        if (!isset($ecomJobMap[$ecomDriver])) {
+            return back()->with('error', "No push job registered for driver [{$ecomDriver}].");
+        }
+
+        $ecomJobMap[$ecomDriver]::dispatchSync($erpId);
+
+        return back()->with('success',
+            "Product #{$erpId} pushed to " . $this->settings->ecomDisplayName() . '.'
+        );
     }
 
-    public function refresh(int $odooId)
+    public function refresh(int $erpId)
     {
-        return $this->fetchSingle($odooId);
+        return $this->fetchSingle($erpId);
+    }
+
+    // ── Private data helpers ──────────────────────────────────────────────────
+
+    private function getErpToEcomProducts(?string $search, string $status, int $perPage)
+    {
+        $query = ProductCache::query()->orderByDesc('fetched_at');
+
+        if ($search) {
+            $query->search($search);
+        }
+
+        // Use model scope — works before and after migration
+        if (in_array($status, ['sent', 'failed', 'pending'])) {
+            $query->ecomStatus($status);
+        }
+
+        return $query->paginate($perPage)->withQueryString();
+    }
+
+    private function getEcomToErpProducts(?string $search, string $status, int $perPage)
+    {
+        $query = SyncMapping::where('sync_mappings.entity_type', 'product')
+            ->whereIn('sync_mappings.last_sync_direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
+            ->orderByDesc('sync_mappings.last_synced_at');
+
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('sync_mappings.ecom_id', 'like', "%{$search}%")
+                  ->orWhere('sync_mappings.erp_id', 'like', "%{$search}%")
+                  ->orWhere('sync_mappings.ecom_handle', 'like', "%{$search}%");
+            });
+        }
+
+        $query->leftJoin('product_cache', function ($join) {
+            $join->on('product_cache.erp_id', '=', 'sync_mappings.erp_id')
+                 ->orOn('product_cache.odoo_id', '=', DB::raw('CAST(sync_mappings.erp_id AS UNSIGNED)'));
+        })->select([
+            'sync_mappings.*',
+            'product_cache.name as product_name',
+            'product_cache.default_code as sku',
+        ]);
+
+        if ($status !== 'all') {
+            $query->whereExists(function ($q) use ($status) {
+                $q->select(DB::raw(1))
+                  ->from('sync_logs')
+                  ->whereColumn('sync_logs.entity_id', 'sync_mappings.ecom_id')
+                  ->where('sync_logs.entity_type', 'product')
+                  ->whereIn('sync_logs.direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
+                  ->where('sync_logs.status', $status)
+                  ->limit(1);
+            });
+        }
+
+        $results = $query->paginate($perPage)->withQueryString();
+
+        $results->getCollection()->transform(function ($product) {
+            $latestLog = SyncLog::where('entity_id', $product->ecom_id)
+                ->where('entity_type', 'product')
+                ->whereIn('direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
+                ->latest()
+                ->first();
+
+            $product->latest_log_status = $latestLog?->status ?? 'pending';
+            return $product;
+        });
+
+        return $results;
+    }
+
+    private function getBidirectionalProducts(?string $search, string $status, int $perPage, string $direction)
+    {
+        return $direction === 'ecom_to_erp'
+            ? $this->getEcomToErpProducts($search, $status, $perPage)
+            : $this->getErpToEcomProducts($search, $status, $perPage);
+    }
+
+    private function getErpToEcomStats(): array
+    {
+        return [
+            'total'   => ProductCache::count(),
+            'sent'    => ProductCache::countEcomStatus('sent'),
+            'failed'  => ProductCache::countEcomStatus('failed'),
+            'pending' => ProductCache::countEcomStatus('pending'),
+        ];
+    }
+
+    private function getEcomToErpStats(): array
+    {
+        $total = SyncMapping::where('entity_type', 'product')
+            ->whereIn('last_sync_direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
+            ->count();
+
+        $success = DB::table('sync_mappings')
+            ->join('sync_logs', function ($join) {
+                $join->on('sync_logs.entity_id', '=', 'sync_mappings.ecom_id')
+                     ->where('sync_logs.entity_type', 'product')
+                     ->whereIn('sync_logs.direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
+                     ->whereRaw('sync_logs.id = (
+                         SELECT id FROM sync_logs sl2
+                         WHERE sl2.entity_id = sync_mappings.ecom_id
+                         AND sl2.entity_type = "product"
+                         ORDER BY created_at DESC LIMIT 1
+                     )');
+            })
+            ->where('sync_logs.status', 'success')
+            ->count();
+
+        $failed = DB::table('sync_mappings')
+            ->join('sync_logs', function ($join) {
+                $join->on('sync_logs.entity_id', '=', 'sync_mappings.ecom_id')
+                     ->where('sync_logs.entity_type', 'product')
+                     ->whereIn('sync_logs.direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
+                     ->whereRaw('sync_logs.id = (
+                         SELECT id FROM sync_logs sl2
+                         WHERE sl2.entity_id = sync_mappings.ecom_id
+                         AND sl2.entity_type = "product"
+                         ORDER BY created_at DESC LIMIT 1
+                     )');
+            })
+            ->where('sync_logs.status', 'failed')
+            ->count();
+
+        return [
+            'total'   => $total,
+            'success' => $success,
+            'failed'  => $failed,
+            'pending' => max(0, $total - $success - $failed),
+        ];
+    }
+
+    private function getBidirectionalStats(): array
+    {
+        return [
+            'erp_to_ecom' => $this->getErpToEcomStats(),
+            'ecom_to_erp' => $this->getEcomToErpStats(),
+            'total'       => ProductCache::count(),
+        ];
     }
 }

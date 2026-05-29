@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Dashboard\MappingController;
 use App\Http\Controllers\Dashboard\ProductCacheController;
 use App\Http\Controllers\Dashboard\ProductFieldConfigController;
+use App\Http\Controllers\Dashboard\FieldConfigController;
 use App\Http\Controllers\Dashboard\CustomersController;
 
 /*
@@ -78,7 +79,8 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
 		Route::get('/{odooId}',                      [ProductCacheController::class, 'show'])     ->name('.show');
 		Route::post('/fetch',                        [ProductCacheController::class, 'fetchAll']) ->name('.fetch');
 		Route::post('/{odooId}/refresh',             [ProductCacheController::class, 'refresh'])  ->name('.refresh');
-		Route::post('/post-shopify',                 [ProductCacheController::class, 'postShopify'])->name('.post-shopify');
+		Route::post('/post-ecom',    [ProductCacheController::class, 'postEcom'])   ->name('.post-ecom');
+		Route::post('/post-shopify', [ProductCacheController::class, 'postShopify'])->name('.post-shopify'); // compat alias
 		Route::post('/post-amazon',                  [ProductCacheController::class, 'postAmazon']) ->name('.post-amazon');
 		Route::delete('/{odooId}/clear',             [ProductCacheController::class, 'clear'])    ->name('.clear');
 		Route::delete('/clear-all',                  [ProductCacheController::class, 'clearAll']) ->name('.clear-all');
@@ -93,6 +95,17 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
     Route::post('/fetch-ecom-fields',   [ProductFieldConfigController::class, 'fetchEcomFields'])->name('.fetch-ecom-fields');
     Route::post('/fetch-erp-fields',    [ProductFieldConfigController::class, 'fetchErpFields']) ->name('.fetch-erp-fields');
 });
+
+    // Unified field config — one route set for ALL entity types
+    Route::prefix('field-config')->name('.field-config')->middleware('role:manage-settings')->group(function () {
+        Route::get('/{entityType}',                    [FieldConfigController::class, 'index'])          ->name('.index');
+        Route::post('/{entityType}',                   [FieldConfigController::class, 'store'])          ->name('.store');
+        Route::put('/{entityType}/{config}',           [FieldConfigController::class, 'update'])         ->name('.update');
+        Route::delete('/{entityType}/{config}',        [FieldConfigController::class, 'destroy'])        ->name('.destroy');
+        Route::patch('/{entityType}/{config}/toggle',  [FieldConfigController::class, 'toggle'])         ->name('.toggle');
+        Route::post('/{entityType}/fetch-ecom-fields', [FieldConfigController::class, 'fetchEcomFields'])->name('.fetch-ecom-fields');
+        Route::post('/{entityType}/fetch-erp-fields',  [FieldConfigController::class, 'fetchErpFields']) ->name('.fetch-erp-fields');
+    });
 
     // Logs (viewer+)
     Route::get('/logs',        [SyncLogsController::class, 'index'])->name('.logs');
