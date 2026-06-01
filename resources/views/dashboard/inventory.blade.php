@@ -34,9 +34,9 @@
         <div class="text-xs text-gray-500 mt-2">
             Last poll: <span class="font-medium text-gray-700">{{ $state->last_poll_at?->diffForHumans() ?? 'Never' }}</span>
         </div>
-        @if($state->last_erp_write_date ?? $state->last_odoo_write_date)
-        <div class="text-xs text-gray-400 mt-0.5">Cursor: {{ $state->last_erp_write_date ?? $state->last_odoo_write_date }}</div>
-        @endif
+       @if($state->last_erp_write_date ?? null)
+		<div class="text-xs text-gray-400 mt-0.5">Cursor: {{ $state->last_erp_write_date }}</div>
+				@endif
     </div>
     @endforeach
 </div>

@@ -3,6 +3,7 @@
 namespace App\Jobs\Ecom;
 
 use App\Models\ProductCache;
+use App\Models\SyncLog;
 use App\Services\Ecom\EcomInterface;
 use App\Services\ProductCacheService;
 use App\Services\SettingsService;
@@ -46,7 +47,6 @@ class PushProductToEcomJob implements ShouldQueue
             $cacheRecord = ProductCache::where('erp_id', $this->erpId)
                 ->orWhere('odoo_id', $this->erpId)
                 ->first();
-
             if ($cacheRecord) {
                 $data = $cacheRecord->readCache();
             }
@@ -68,15 +68,36 @@ class PushProductToEcomJob implements ShouldQueue
             return;
         }
 
+        // Create log entry before push
+        $log = SyncLog::create([
+            'direction'   => SyncLog::DIRECTION_ERP_TO_ECOM,
+            'entity_type' => 'product',
+            'entity_id'   => (string) $this->erpId,
+            'action'      => 'sync',
+            'status'      => SyncLog::STATUS_PROCESSING,
+        ]);
+
         try {
             $ecomProductId = $ecom->syncProduct($template, $variants, $attributeValues);
 
             $cache->markEcomSent($this->erpId, $ecomProductId);
 
+            // Store response so Info tab shows it
+            $log->update([
+                'status'           => SyncLog::STATUS_SUCCESS,
+                'response_payload' => json_encode([
+                    'id'              => $ecomProductId,
+                    'ecom_product_id' => $ecomProductId,
+                    'driver'          => $ecom->driverName(),
+                ]),
+                'synced_at' => now(),
+            ]);
+
             Log::info("PushProductToEcomJob [{$ecom->driverName()}]: synced #{$this->erpId} → {$ecomProductId}");
 
         } catch (\Throwable $e) {
             $cache->markEcomFailed($this->erpId, $e->getMessage());
+            $log->markFailed($e->getMessage());
             Log::error("PushProductToEcomJob [{$ecom->driverName()}]: failed #{$this->erpId} — " . $e->getMessage());
             throw $e;
         }

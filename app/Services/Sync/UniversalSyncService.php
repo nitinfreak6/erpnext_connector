@@ -4,6 +4,7 @@ namespace App\Services\Sync;
 
 use App\Models\EntityDefinition;
 use App\Models\ProductFieldConfig;
+use App\Models\SyncLog;
 use App\Models\SyncMapping;
 use App\Services\Ecom\EcomInterface;
 use App\Services\Erp\ErpInterface;
@@ -54,22 +55,38 @@ class UniversalSyncService
             ->where('erp_driver', $this->erp->driverName())
             ->first();
 
-        if ($mapping && $mapping->ecom_id) {
-            $result  = $this->updateInEcom($entityType, $mapping->ecom_id, $ecomPayload);
-            $ecomId  = $mapping->ecom_id;
-            Log::info("UniversalSyncService: updated {$entityType} #{$erpId} → {$this->ecom->driverName()} #{$ecomId}");
-        } else {
-            $result = $this->createInEcom($entityType, $ecomPayload);
-            $ecomId = (string) ($result['id'] ?? '');
+        $log = SyncLog::create([
+            'direction'       => SyncLog::DIRECTION_ERP_TO_ECOM,
+            'entity_type'     => $entityType,
+            'entity_id'       => $erpId,
+            'action'          => ($mapping && $mapping->ecom_id) ? 'update' : 'create',
+            'status'          => SyncLog::STATUS_PROCESSING,
+            'request_payload' => json_encode($ecomPayload),
+        ]);
 
-            if ($ecomId && $erpId) {
-                SyncMapping::updateOrCreate(
-                    ['entity_type' => $entityType, 'erp_id' => $erpId, 'erp_driver' => $this->erp->driverName()],
-                    ['ecom_id' => $ecomId, 'ecom_driver' => $this->ecom->driverName(), 'last_synced_at' => now(), 'last_sync_direction' => 'erp_to_ecom']
-                );
+        try {
+            if ($mapping && $mapping->ecom_id) {
+                $result  = $this->updateInEcom($entityType, $mapping->ecom_id, $ecomPayload);
+                $ecomId  = $mapping->ecom_id;
+                Log::info("UniversalSyncService: updated {$entityType} #{$erpId} → {$this->ecom->driverName()} #{$ecomId}");
+            } else {
+                $result = $this->createInEcom($entityType, $ecomPayload);
+                $ecomId = (string) ($result['id'] ?? '');
+
+                if ($ecomId && $erpId) {
+                    SyncMapping::updateOrCreate(
+                        ['entity_type' => $entityType, 'erp_id' => $erpId, 'erp_driver' => $this->erp->driverName()],
+                        ['ecom_id' => $ecomId, 'ecom_driver' => $this->ecom->driverName(), 'last_synced_at' => now(), 'last_sync_direction' => 'erp_to_ecom']
+                    );
+                }
+
+                Log::info("UniversalSyncService: created {$entityType} #{$erpId} → {$this->ecom->driverName()} #{$ecomId}");
             }
 
-            Log::info("UniversalSyncService: created {$entityType} #{$erpId} → {$this->ecom->driverName()} #{$ecomId}");
+            $log->markSuccess(json_encode(['ecom_id' => $ecomId]));
+        } catch (\Throwable $e) {
+            $log->markFailed($e->getMessage());
+            throw $e;
         }
 
         return array_merge($result, ['id' => $ecomId, 'ecom_id' => $ecomId]);
@@ -100,22 +117,38 @@ class UniversalSyncService
             ->where('ecom_driver', $this->ecom->driverName())
             ->first();
 
-        if ($mapping && $mapping->erp_id) {
-            $result = $this->updateInErp($entityType, (int) $mapping->erp_id, $erpPayload);
-            $erpId  = $mapping->erp_id;
-            Log::info("UniversalSyncService: updated {$entityType} ecom#{$ecomId} → {$this->erp->driverName()} #{$erpId}");
-        } else {
-            $result = $this->createInErp($entityType, $erpPayload);
-            $erpId  = (string) ($result['id'] ?? '');
+        $log = SyncLog::create([
+            'direction'       => SyncLog::DIRECTION_ECOM_TO_ERP,
+            'entity_type'     => $entityType,
+            'entity_id'       => $ecomId,
+            'action'          => ($mapping && $mapping->erp_id) ? 'update' : 'create',
+            'status'          => SyncLog::STATUS_PROCESSING,
+            'request_payload' => json_encode($erpPayload),
+        ]);
 
-            if ($erpId && $ecomId) {
-                SyncMapping::updateOrCreate(
-                    ['entity_type' => $entityType, 'ecom_id' => $ecomId, 'ecom_driver' => $this->ecom->driverName()],
-                    ['erp_id' => $erpId, 'erp_driver' => $this->erp->driverName(), 'last_synced_at' => now(), 'last_sync_direction' => 'ecom_to_erp']
-                );
+        try {
+            if ($mapping && $mapping->erp_id) {
+                $result = $this->updateInErp($entityType, (int) $mapping->erp_id, $erpPayload);
+                $erpId  = $mapping->erp_id;
+                Log::info("UniversalSyncService: updated {$entityType} ecom#{$ecomId} → {$this->erp->driverName()} #{$erpId}");
+            } else {
+                $result = $this->createInErp($entityType, $erpPayload);
+                $erpId  = (string) ($result['id'] ?? '');
+
+                if ($erpId && $ecomId) {
+                    SyncMapping::updateOrCreate(
+                        ['entity_type' => $entityType, 'ecom_id' => $ecomId, 'ecom_driver' => $this->ecom->driverName()],
+                        ['erp_id' => $erpId, 'erp_driver' => $this->erp->driverName(), 'last_synced_at' => now(), 'last_sync_direction' => 'ecom_to_erp']
+                    );
+                }
+
+                Log::info("UniversalSyncService: created {$entityType} ecom#{$ecomId} → {$this->erp->driverName()} #{$erpId}");
             }
 
-            Log::info("UniversalSyncService: created {$entityType} ecom#{$ecomId} → {$this->erp->driverName()} #{$erpId}");
+            $log->markSuccess(json_encode(['erp_id' => $erpId]));
+        } catch (\Throwable $e) {
+            $log->markFailed($e->getMessage());
+            throw $e;
         }
 
         return array_merge($result, ['id' => $erpId, 'erp_id' => $erpId]);

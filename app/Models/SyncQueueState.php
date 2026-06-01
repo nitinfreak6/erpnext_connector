@@ -41,13 +41,14 @@ class SyncQueueState extends Model
     }
 
     // FIX: writes last_erp_write_date — no longer Odoo-specific column name
-    public function markComplete(string $writeDate): void
+    public function markComplete(string $writeDate, ?string $notes = null): void
     {
         $this->update([
             'is_running'          => false,
             'last_poll_at'        => now(),
             'last_erp_write_date' => $writeDate,
             'run_started_at'      => null,
+            'notes'               => $notes,
         ]);
     }
 

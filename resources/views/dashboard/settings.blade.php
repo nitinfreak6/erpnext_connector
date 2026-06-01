@@ -342,19 +342,7 @@
                     </div>
                 </div>
 
-                {{-- Enable Products Linking toggle --}}
-                <div class="dir-row"
-                     x-data="{ on: {{ $ss->isProductLinkingEnabled() ? 'true' : 'false' }} }">
-                    <div class="dir-label">Enable Products Linking</div>
-                    <div class="toggle-wrap" style="padding-top:0">
-                        <div class="toggle-track" :class="on?'on':''" @click="on=!on">
-                            <div class="toggle-thumb"></div>
-                        </div>
-                        <span class="toggle-label" x-text="on?'On':'Off'"
-                              :style="on?'color:#f97316;font-weight:700':''"></span>
-                        <input type="hidden" name="product_linking_enabled" :value="on?'1':'0'">
-                    </div>
-                </div>
+                
 
             </div>
         </div>
@@ -501,63 +489,7 @@
                     </div>
                 </div>
 
-                {{-- Enable Dispatch Confirmation --}}
-                <div class="dir-row"
-                     x-data="{ on: {{ $ss->isDispatchConfirmationEnabled() ? 'true' : 'false' }} }">
-                    <div class="dir-label">Enable Dispatch Confirmation</div>
-                    <div class="toggle-wrap" style="padding-top:0">
-                        <div class="toggle-track" :class="on?'on':''" @click="on=!on">
-                            <div class="toggle-thumb"></div>
-                        </div>
-                        <span class="toggle-label" x-text="on?'On':'Off'"
-                              :style="on?'color:#f97316;font-weight:700':''"></span>
-                        <input type="hidden" name="dispatch_confirmation_enabled" :value="on?'1':'0'">
-                    </div>
-                </div>
-
-                {{-- Dispatch Confirmation Sync Mode --}}
-                <div class="dir-row" style="flex-direction:column; align-items:flex-start; gap:10px;"
-                     x-data="{ mode: '{{ $dispatchMode }}' }">
-                    <div class="dir-label">Dispatch Confirmation Direction</div>
-                    <input type="hidden" name="dispatch_sync_mode" :value="mode">
-
-                    <div class="sync-mode-group">
-                        <button type="button"
-                                :class="mode==='erp_to_ecom' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='erp_to_ecom'">
-                            <span class="smode-arrow">→</span>
-                            {{ $erpLabel }} → {{ $ecomLabel }}
-                        </button>
-                        <button type="button"
-                                :class="mode==='ecom_to_erp' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='ecom_to_erp'">
-                            <span class="smode-arrow">→</span>
-                            {{ $ecomLabel }} → {{ $erpLabel }}
-                        </button>
-                        <button type="button"
-                                :class="mode==='bidirectional' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='bidirectional'">
-                            <span class="smode-arrow">⇄</span>
-                            Both
-                        </button>
-                    </div>
-
-                    <div class="flow-diagram" x-show="mode==='erp_to_ecom'">
-                        <span class="flow-node">{{ $erpLabel }}</span>
-                        <span class="flow-arrow">→</span>
-                        <span class="flow-node">{{ $ecomLabel }}</span>
-                    </div>
-                    <div class="flow-diagram" x-show="mode==='ecom_to_erp'">
-                        <span class="flow-node">{{ $ecomLabel }}</span>
-                        <span class="flow-arrow">→</span>
-                        <span class="flow-node">{{ $erpLabel }}</span>
-                    </div>
-                    <div class="flow-diagram" x-show="mode==='bidirectional'">
-                        <span class="flow-node">{{ $erpLabel }}</span>
-                        <span class="flow-arrow">⇄</span>
-                        <span class="flow-node">{{ $ecomLabel }}</span>
-                    </div>
-                </div>
+                
 
             </div>
         </div>

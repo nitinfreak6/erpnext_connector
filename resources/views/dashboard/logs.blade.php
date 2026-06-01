@@ -30,8 +30,8 @@
             <label class="block text-xs text-gray-500 mb-1">Direction</label>
             <select name="direction" class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
                 <option value="">All</option>
-                <option value="erp_to_ecom" {{ in_array($direction, ['odoo_to_shopify','erp_to_ecom']) ? 'selected' : '' }}>{{ $erpDisplayName }} → {{ $ecomDisplayName }}</option>
-                <option value="ecom_to_erp" {{ in_array($direction, ['shopify_to_odoo','ecom_to_erp']) ? 'selected' : '' }}>{{ $ecomDisplayName }} → {{ $erpDisplayName }}</option>
+               <option value="erp_to_ecom"  {{ $direction === 'erp_to_ecom'  ? 'selected' : '' }}>{{ $erpDisplayName }} → {{ $ecomDisplayName }}</option>
+				<option value="ecom_to_erp"  {{ $direction === 'ecom_to_erp'  ? 'selected' : '' }}>{{ $ecomDisplayName }} → {{ $erpDisplayName }}</option>
             </select>
         </div>
         <div>

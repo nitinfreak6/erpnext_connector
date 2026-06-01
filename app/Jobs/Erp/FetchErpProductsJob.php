@@ -82,7 +82,7 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
 
         if (empty($products)) {
             Log::info("FetchErpProductsJob [{$erp->driverName()}]: nothing changed since {$writeDate}.");
-            $state->markComplete($writeDate);
+            $state->markComplete($writeDate, 'nothing_changed');
             return;
         }
 
@@ -105,7 +105,7 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
             $dispatched++;
         }
 
-        $state->markComplete($latestWriteDate);
+        $state->markComplete($latestWriteDate, "synced:{$dispatched}");
 
         Log::info("FetchErpProductsJob [{$erp->driverName()}]: incremental — {$dispatched} products, cursor → {$latestWriteDate}");
     }
@@ -173,23 +173,12 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
     // Add new ecom drivers by adding one entry to the $ecomJobMap array.
     private function dispatchPushJobs(int $erpId, SettingsService $settings): void
     {
-        $ecomDriver = $settings->ecomDriver();
-
-        $ecomJobMap = [
-            'shopify'     => \App\Jobs\Shopify\PushProductToShopifyJob::class,
-            // 'woocommerce' => \App\Jobs\WooCommerce\PushProductToWooCommerceJob::class,
-            // 'magento'     => \App\Jobs\Magento\PushProductToMagentoJob::class,
-        ];
-
-        if (isset($ecomJobMap[$ecomDriver])) {
-            $ecomJobMap[$ecomDriver]::dispatchSync($erpId);
-        } else {
-            Log::warning("FetchErpProductsJob: no push job registered for ecom driver [{$ecomDriver}].");
-        }
+        // Generic job — works for any ecom driver via EcomInterface::syncProduct()
+        \App\Jobs\Ecom\PushProductToEcomJob::dispatch($erpId);
 
         // Amazon is a secondary channel — conditional on its own enable flag
         if ($settings->isAmazonChannelEnabled()) {
-            PushProductToAmazonJob::dispatchSync($erpId);
+            PushProductToAmazonJob::dispatch($erpId);
         }
     }
 }

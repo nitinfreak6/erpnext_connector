@@ -76,10 +76,12 @@
                 <p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Sync</p>
             </div>
 			
-			<a href="{{ route('dashboard.customers') }}" 
-			   class="flex items-center px-3 py-2 text-sm font-medium {{ request()->routeIs('dashboard.customers*') ? 'bg-indigo-100 text-indigo-700' : 'text-gray-700 hover:bg-gray-100' }} rounded-lg">
-				<svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+			<a href="{{ route('dashboard.customers') }}"
+			   class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+					  {{ request()->routeIs('dashboard.product-cache*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
+				<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+						  d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
 				</svg>
 				Customers
 			</a>
@@ -134,7 +136,7 @@
             </a>
             @endif
 
-            @if(auth()->user()->hasPermission('view-webhooks'))
+          <!--  @if(auth()->user()->hasPermission('view-webhooks'))
             <a href="{{ route('dashboard.webhooks') }}"
                class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.webhooks') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
                 <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -143,7 +145,7 @@
                 </svg>
                 Webhooks
             </a>
-            @endif
+            @endif-->
 			
 			{{-- Mappings section --}}
 			@if(auth()->user()->hasPermission('manage-settings'))

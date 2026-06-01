@@ -27,6 +27,11 @@ class SettingsService
 
         return null;
     }
+	
+	public function orderSyncMode(): string
+	{
+		return $this->salesOrderSyncMode();
+	}
 
     public function all(): array
     {

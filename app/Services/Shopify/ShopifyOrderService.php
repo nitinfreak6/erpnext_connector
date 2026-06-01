@@ -119,7 +119,10 @@ class ShopifyOrderService
         if ($status !== 'any') {
             $filters[] = "status:{$status}";
         }
-        if (!empty($params['created_at_min'])) {
+        if (!empty($params['updated_at_min'])) {
+            // Use updated_at filter — only fetch orders changed since cursor
+            $filters[] = "updated_at:>={$params['updated_at_min']}";
+        } elseif (!empty($params['created_at_min'])) {
             $filters[] = "created_at:>={$params['created_at_min']}";
         }
         $queryStr = implode(' AND ', $filters);

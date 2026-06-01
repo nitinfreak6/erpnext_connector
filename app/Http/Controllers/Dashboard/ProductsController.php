@@ -51,79 +51,99 @@ class ProductsController extends Controller
 
     // ── Fetch: ERP → cache (incremental, new/updated only) ───────────────────
 
-    public function fetch()
-    {
-        $syncMode = $this->settings->productSyncMode();
+    // ── Fetch: ERP → cache (incremental, new/updated only) ───────────────────
 
-        if ($syncMode === 'ecom_to_erp') {
-            return back()->with('error', 'Sync mode is Ecom → ERP. Use Pull instead.');
-        }
+	public function fetch()
+	{
+		$syncMode = $this->settings->productSyncMode();
 
-        // FIX: correct signature — no shopify/amazon params
-        FetchErpProductsJob::dispatch(fullSync: false)->onQueue('sync');
+		if ($syncMode === 'ecom_to_erp') {
+			return back()->with('error', 'Sync mode is Ecom → ERP. Use Pull instead.');
+		}
 
-        return back()->with('success', 'Incremental ERP fetch queued (new/updated products only).');
-    }
+		FetchErpProductsJob::dispatchSync(fullSync: false);
 
-    // ── Pull: ecom → ERP (incremental, new/updated only) ─────────────────────
+		$notes = \App\Models\SyncQueueState::forType('products')->fresh()->notes ?? '';
 
-    public function pull()
-    {
-        $syncMode = $this->settings->productSyncMode();
+		if ($notes === 'nothing_changed') {
+			return back()->with('info', 'No new or updated products in ' . $this->settings->erpDisplayName() . ' since last sync.');
+		}
 
-        if ($syncMode === 'erp_to_ecom') {
-            return back()->with('error', 'Sync mode is ERP → Ecom. Use Fetch instead.');
-        }
+		if (str_starts_with($notes, 'synced:')) {
+			$count = str_replace('synced:', '', $notes);
+			return back()->with('success', "{$count} product(s) fetched from " . $this->settings->erpDisplayName() . ' and queued for ' . $this->settings->ecomDisplayName() . '.');
+		}
 
-        FetchEcomProductsJob::dispatch(fullSync: false)->onQueue('sync');
+		return back()->with('success', 'Fetch completed from ' . $this->settings->erpDisplayName() . '.');
+	}
 
-        return back()->with('success',
-            'Incremental pull from ' . $this->settings->ecomDisplayName() . ' queued (new/updated only).'
-        );
-    }
+	// ── Pull: ecom → ERP (incremental, new/updated only) ─────────────────────
+
+	public function pull()
+	{
+		$syncMode = $this->settings->productSyncMode();
+
+		if ($syncMode === 'erp_to_ecom') {
+			return back()->with('error', 'Sync mode is ERP → Ecom. Use Fetch instead.');
+		}
+
+		FetchEcomProductsJob::dispatchSync(fullSync: false);
+
+		$notes = \App\Models\SyncQueueState::forType('products')->fresh()->notes ?? '';
+
+		if ($notes === 'nothing_changed') {
+			return back()->with('info', 'No new or updated products in ' . $this->settings->ecomDisplayName() . ' since last sync.');
+		}
+
+		return back()->with('success', 'Products pulled from ' . $this->settings->ecomDisplayName() . '. ' . $notes);
+	}
 
     // ── Post all: push all cached products to ecom ────────────────────────────
 
     public function postAll(Request $request)
-    {
-        $syncMode = $this->settings->productSyncMode();
+	{
+		$syncMode = $this->settings->productSyncMode();
 
-        if ($syncMode === 'ecom_to_erp') {
-            return back()->with('error', 'Sync mode is Ecom → ERP. Products flow the other direction.');
-        }
+		if ($syncMode === 'ecom_to_erp') {
+			return back()->with('error', 'Sync mode is Ecom → ERP. Products flow the other direction.');
+		}
 
-        // Resolve active ecom push job from driver
-        $ecomDriver = $this->settings->ecomDriver();
-        $ecomJobMap = [
-            'shopify' => \App\Jobs\Ecom\PushProductToEcomJob::class,
-            // 'woocommerce' => \App\Jobs\WooCommerce\PushProductToWooCommerceJob::class,
-        ];
+		$ecomDriver = $this->settings->ecomDriver();
+		$ecomJobMap = ['shopify' => \App\Jobs\Ecom\PushProductToEcomJob::class];
 
-        if (!isset($ecomJobMap[$ecomDriver])) {
-            return back()->with('error', "No push job registered for ecom driver [{$ecomDriver}].");
-        }
+		if (!isset($ecomJobMap[$ecomDriver])) {
+			return back()->with('error', "No push job registered for ecom driver [{$ecomDriver}].");
+		}
 
-        $ecomJobClass  = $ecomJobMap[$ecomDriver];
-        $amazonEnabled = $this->settings->isAmazonChannelEnabled();
+		$ecomJobClass  = $ecomJobMap[$ecomDriver];
+		$amazonEnabled = $this->settings->isAmazonChannelEnabled();
 
-        // FIX: use erp_id ?? odoo_id generically
-        $erpCol = ProductCache::erpIdColumn();
-        $erpIds = ProductCache::pluck($erpCol)
-            ->map(fn($id) => (int) $id)
-            ->filter()
-            ->toArray();
+		// Only push pending/failed — skip already sent
+		$erpCol = ProductCache::erpIdColumn();
+		$erpIds = ProductCache::where(function ($q) {
+				$col = ProductCache::ecomStatusColumn();
+				$q->where($col, ProductCache::STATUS_PENDING)
+				  ->orWhere($col, ProductCache::STATUS_FAILED)
+				  ->orWhereNull($col);
+			})
+			->pluck($erpCol)
+			->map(fn($id) => (int) $id)
+			->filter()
+			->toArray();
 
-        $queued = 0;
-        foreach ($erpIds as $erpId) {
-            $ecomJobClass::dispatch($erpId)->onQueue('sync');
-            if ($amazonEnabled) {
-                \App\Jobs\Amazon\PushProductToAmazonJob::dispatch($erpId)->onQueue('sync');
-            }
-            $queued++;
-        }
+		if (empty($erpIds)) {
+			return back()->with('info', 'All products already pushed to ' . $this->settings->ecomDisplayName() . '.');
+		}
 
-        return back()->with('success', "Queued {$queued} products for push to " . $this->settings->ecomDisplayName() . '.');
-    }
+		foreach ($erpIds as $erpId) {
+			$ecomJobClass::dispatch($erpId);
+			if ($amazonEnabled) {
+				\App\Jobs\Amazon\PushProductToAmazonJob::dispatch($erpId);
+			}
+		}
+
+		return back()->with('success', count($erpIds) . ' product(s) pushed to ' . $this->settings->ecomDisplayName() . '.');
+	}
 
     // ── Show product detail ───────────────────────────────────────────────────
 

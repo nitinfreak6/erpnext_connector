@@ -16,7 +16,7 @@ class OdooInventoryService
     public function getModifiedSince(string $writeDate, ?int $locationId = null): array
     {
         $domain = [
-            ['write_date', '>', $writeDate],
+            ['write_date', '>=', $writeDate],
             ['location_id.usage', '=', 'internal'],
         ];
 

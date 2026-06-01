@@ -83,19 +83,21 @@ class FetchEcomOrdersJob implements ShouldQueue, ShouldBeUnique
                         continue;
                     }
 
-                    $mapping = SyncMapping::where('entity_type', 'order')
+                    // FIX: check both 'order' and 'sales_order' entity types
+                    $alreadyMapped = SyncMapping::whereIn('entity_type', ['order', 'sales_order'])
                         ->where('ecom_id', $ecomId)
-                        ->first();
+                        ->exists();
 
-                    if ($mapping) {
-                        // Already mapped — check if it needs a status update
-                        $orderSync->updateOrderInErp($order, $mapping);
+                    if ($alreadyMapped) {
+                        // Already synced — skip, no need to re-process
                         $skipped++;
-                    } else {
-                        // New order — create in ERP
-                        $orderSync->importOrderToErp($order);
-                        $synced++;
+                        continue;
                     }
+
+                    // New order — sync to ERP
+                    $orderSync->syncEcomOrderToErp($order);
+                    $synced++;
+
                 } catch (\Throwable $e) {
                     Log::error("FetchEcomOrdersJob [{$driver}]: failed for order " . ($order['id'] ?? '?') . ': ' . $e->getMessage());
                     $failed++;
@@ -111,7 +113,7 @@ class FetchEcomOrdersJob implements ShouldQueue, ShouldBeUnique
                 'notes'                => "Synced: {$synced}, Updated: {$skipped}, Failed: {$failed}",
             ]);
 
-            Log::info("FetchEcomOrdersJob [{$driver}]: done. Synced: {$synced}, Updated: {$skipped}, Failed: {$failed}");
+            Log::info("FetchEcomOrdersJob [{$driver}]: done. Synced: {$synced}, Skipped: {$skipped}, Failed: {$failed}");
 
         } catch (\Throwable $e) {
             $state->update(['is_running' => false, 'notes' => $e->getMessage()]);

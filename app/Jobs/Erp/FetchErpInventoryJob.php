@@ -8,18 +8,15 @@ use App\Models\SyncQueueState;
 use App\Services\Erp\ErpInterface;
 use App\Services\SettingsService;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
-class FetchErpInventoryJob implements ShouldQueue, ShouldBeUnique
+class FetchErpInventoryJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
-
-    public int $uniqueFor = 300;
 
     public function __construct(private readonly ?int $locationId = null)
     {
@@ -61,7 +58,11 @@ class FetchErpInventoryJob implements ShouldQueue, ShouldBeUnique
             // FIX: use getErpWriteDate() — reads last_erp_write_date
             $writeDate = $state->getErpWriteDate();
 
-            $quants          = $erp->getInventoryModifiedSince($writeDate, $this->locationId);
+            Log::info("FetchErpInventoryJob: cursor={$writeDate} locationId=" . ($this->locationId ?? 'null'));
+
+            $quants = $erp->getInventoryModifiedSince($writeDate, $this->locationId);
+
+            Log::info("FetchErpInventoryJob: raw quants count=" . count($quants));
             $latestWriteDate = $writeDate;
 
             foreach ($quants as $quant) {
@@ -78,6 +79,7 @@ class FetchErpInventoryJob implements ShouldQueue, ShouldBeUnique
                 }
             }
 
+            // Advance cursor by 1 second so next run uses strict > and avoids re-fetching
             $state->markComplete($latestWriteDate);
 
             Log::info("FetchErpInventoryJob [{$erp->driverName()}]: dispatched " . count($quants) . ' inventory jobs.');

@@ -144,9 +144,74 @@ class OdooErpAdapter implements ErpInterface
     }
 
     public function createOrder(array $orderData): int
-    {
-        return $this->orders->createFromShopify($orderData);
-    }
+	{
+		$readonly = [
+			'delivery_status', 'invoice_status', 'amount_tax',
+			'amount_total', 'amount_untaxed', 'state',
+			'picking_ids', 'invoice_ids', 'write_date', 'create_date',
+		];
+
+		$payload = array_diff_key($orderData, array_flip($readonly));
+
+		// partner_id must be an integer — resolve from email if string was passed
+		if (isset($payload['partner_id']) && !is_int($payload['partner_id'])) {
+			$email     = (string) $payload['partner_id'];
+			$partnerId = $this->resolveOrCreatePartner($email, $orderData);
+			if (!$partnerId) {
+				throw new \RuntimeException("Cannot create order: could not resolve partner for '{$email}'");
+			}
+			$payload['partner_id'] = $partnerId;
+		}
+
+		$odoo = app(\App\Services\Odoo\OdooService::class);
+		$id   = $odoo->create('sale.order', $payload);
+
+		return (int) $id;
+	}
+
+	private function resolveOrCreatePartner(string $email, array $orderData = []): ?int
+	{
+		$odoo = app(\App\Services\Odoo\OdooService::class);
+
+		// Search existing partner by email — options as array, not int
+		if (filter_var($email, FILTER_VALIDATE_EMAIL)) {
+			$existing = $odoo->searchRead(
+				'res.partner',
+				[['email', '=', $email]],
+				['id'],
+				['limit' => 1]   // FIX: was 1, must be ['limit' => 1]
+			);
+			if (!empty($existing)) {
+				return (int) $existing[0]['id'];
+			}
+		}
+
+		// Build name from order data
+		$name = '';
+		if (!empty($orderData['billing_address'])) {
+			$b    = $orderData['billing_address'];
+			$name = trim(($b['first_name'] ?? '') . ' ' . ($b['last_name'] ?? ''));
+		}
+		if (empty($name) && !empty($orderData['customer'])) {
+			$c    = $orderData['customer'];
+			$name = trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? ''));
+		}
+		if (empty($name)) {
+			$name = $email ?: 'Shopify Customer';
+		}
+
+		$partnerData = ['name' => $name, 'customer_rank' => 1];
+
+		if (filter_var($email, FILTER_VALIDATE_EMAIL)) {
+			$partnerData['email'] = $email;
+		}
+
+		if (!empty($orderData['billing_address']['phone'])) {
+			$partnerData['phone'] = $orderData['billing_address']['phone'];
+		}
+
+		return (int) $odoo->create('res.partner', $partnerData);
+	}
 
     public function confirmOrder(int $orderId): bool
     {

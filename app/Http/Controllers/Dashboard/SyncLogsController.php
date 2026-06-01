@@ -15,28 +15,27 @@ class SyncLogsController extends Controller
 
     public function index(Request $request)
     {
-        $syncMode    = $this->settings->productSyncMode();
-        $direction   = $request->input('direction');
-        $entityType  = $request->input('entity_type');
-        $status      = $request->input('status');
-        $search      = $request->input('search');
-        $dateFrom    = $request->input('date_from');
-        $dateTo      = $request->input('date_to');
-        $perPage     = (int) $request->input('per_page', 60);
+        $direction  = $request->input('direction');
+        $entityType = $request->input('entity_type');
+        $status     = $request->input('status');
+        $search     = $request->input('search');
+        $dateFrom   = $request->input('date_from');
+        $dateTo     = $request->input('date_to');
+        $perPage    = (int) $request->input('per_page', 60);
 
         $query = SyncLog::orderByDesc('created_at');
 
-        // Filter by sync mode if not bidirectional
-        if (!$direction) {
-            if ($syncMode === 'erp_to_ecom') {
-                $query->where('direction', 'odoo_to_shopify');
-            } elseif ($syncMode === 'ecom_to_erp') {
-                $query->where('direction', 'shopify_to_odoo');
-            }
-            // else bidirectional: show both
-        } else {
-            // User explicitly selected a direction filter
-            $query->where('direction', $direction);
+        // Only filter by direction when user explicitly selects one
+        // Default shows ALL logs regardless of current sync mode setting
+        if ($direction) {
+            $directionMap = [
+                'odoo_to_shopify' => ['odoo_to_shopify', 'erp_to_ecom', 'erp_to_shopify'],
+                'shopify_to_odoo' => ['shopify_to_odoo', 'ecom_to_erp', 'shopify_to_erp'],
+                'erp_to_ecom'     => ['erp_to_ecom', 'odoo_to_shopify', 'erp_to_shopify'],
+                'ecom_to_erp'     => ['ecom_to_erp', 'shopify_to_odoo', 'shopify_to_erp'],
+            ];
+            $directions = $directionMap[$direction] ?? [$direction];
+            $query->whereIn('direction', $directions);
         }
 
         if ($entityType) $query->where('entity_type', $entityType);
@@ -52,34 +51,20 @@ class SyncLogsController extends Controller
             });
         }
 
-        $logs = $query->paginate($perPage)->withQueryString();
-
-        // Filter options
+        $logs        = $query->paginate($perPage)->withQueryString();
         $entityTypes = SyncLog::distinct()->pluck('entity_type')->sort()->values();
+        $summary     = SyncLog::selectRaw('status, COUNT(*) as total')
+                           ->groupBy('status')
+                           ->pluck('total', 'status');
 
-        // Status summary (based on current filters)
-        $summary = SyncLog::selectRaw('status, COUNT(*) as total')
-            ->groupBy('status')
-            ->pluck('total', 'status');
-
-        // Display names
-        $erpDisplayName = ucfirst($this->settings->erpDriver() ?? 'ERP');
-        $ecomDisplayName = ucfirst($this->settings->ecomDriver() ?? 'Ecom');
+        $erpDisplayName  = $this->settings->erpDisplayName();
+        $ecomDisplayName = $this->settings->ecomDisplayName();
+        $syncMode        = $this->settings->salesOrderSyncMode();
 
         return view('dashboard.logs', compact(
-            'logs', 
-            'direction', 
-            'entityType', 
-            'status', 
-            'search',
-            'dateFrom', 
-            'dateTo', 
-            'entityTypes', 
-            'summary', 
-            'syncMode',
-            'erpDisplayName',
-            'ecomDisplayName',
-            'perPage'
+            'logs', 'direction', 'entityType', 'status', 'search',
+            'dateFrom', 'dateTo', 'entityTypes', 'summary', 'syncMode',
+            'erpDisplayName', 'ecomDisplayName', 'perPage'
         ));
     }
 

@@ -53,8 +53,9 @@ class ShopifyInventoryService
 
         $data   = $this->graphql->query($mutation, [
             'input' => [
-                'name'   => 'available',
-                'reason' => 'correction',
+                'name'                 => 'available',
+                'reason'               => 'correction',
+                'ignoreCompareQuantity' => true,
                 'quantities' => [[
                     'inventoryItemId' => $this->toGid('InventoryItem', $inventoryItemId),
                     'locationId'      => $this->toGid('Location', $shopifyLocationId),
@@ -120,6 +121,84 @@ class ShopifyInventoryService
         }
 
         return $data['inventorySetQuantities']['inventoryAdjustmentGroup'] ?? [];
+    }
+
+    
+    /**
+     * Update inventory for a product (by product GID or inventory item GID).
+     * Resolves inventory item ID and location automatically.
+     * Called by ShopifyEcomAdapter::updateInventory().
+     */
+    public function update(string|int $productGidOrId, int $quantity, ?string $locationId = null): void
+    {
+        // locationId should already be resolved by PushInventoryToEcomJob from the location mapping
+        // Fall back to settings or first active location if not provided
+        $resolvedLocationId = $locationId
+            ?? app(\App\Services\SettingsService::class)->get('shopify_location_id')
+            ?? $this->getFirstLocationId();
+
+        if (!$resolvedLocationId) {
+            throw new \RuntimeException('ShopifyInventoryService: no location ID available. Add location mapping in Settings.');
+        }
+
+        // Get inventory item IDs from the product's variants
+        $inventoryItemIds = $this->resolveInventoryItemIds($productGidOrId);
+
+        if (empty($inventoryItemIds)) {
+            throw new \RuntimeException("ShopifyInventoryService: no tracked inventory items found for product {$productGidOrId}. Enable inventory tracking in field config.");
+        }
+
+        foreach ($inventoryItemIds as $inventoryItemId) {
+            $this->setLevel((string) $inventoryItemId, (string) $resolvedLocationId, $quantity);
+        }
+    }
+
+    /**
+     * Get inventory item IDs from a Shopify product GID or numeric ID.
+     */
+    private function resolveInventoryItemIds(string|int $productGidOrId): array
+    {
+        $gid = str_starts_with((string) $productGidOrId, 'gid://')
+            ? $productGidOrId
+            : "gid://shopify/Product/{$productGidOrId}";
+
+        $query = <<<'GQL'
+        query getProductInventory($id: ID!) {
+            product(id: $id) {
+                variants(first: 50) {
+                    edges {
+                        node {
+                            inventoryItem {
+                                id
+                                tracked
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        GQL;
+
+        $data = $this->graphql->query($query, ['id' => $gid]);
+        $ids  = [];
+
+        foreach ($data['product']['variants']['edges'] ?? [] as $edge) {
+            $item = $edge['node']['inventoryItem'] ?? null;
+            if ($item && ($item['tracked'] ?? false)) {
+                $ids[] = $this->fromGid($item['id']);
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Get the first active Shopify location ID.
+     */
+    public function getFirstLocationId(): ?string
+    {
+        $locations = $this->getLocations();
+        return !empty($locations) ? $this->fromGid($locations[0]['id']) : null;
     }
 
     /**
