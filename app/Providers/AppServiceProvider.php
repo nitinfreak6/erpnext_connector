@@ -74,13 +74,22 @@ class AppServiceProvider extends ServiceProvider
         View::composer('*', function ($view) {
             try {
                 $settings = app(SettingsService::class);
-                $view->with('appName',        $settings->appName());
-                $view->with('erpDisplayName', $settings->erpDisplayName());
-                $view->with('ecomDisplayName',$settings->ecomDisplayName());
+                $view->with('appName',                $settings->appName());
+                $view->with('erpDisplayName',         $settings->erpDisplayName());
+                $view->with('ecomDisplayName',        $settings->ecomDisplayName());
+                // Feature flags — used by sidebar to show/hide sections
+                $view->with('featureProducts',        $settings->isProductSyncEnabled());
+                $view->with('featureOrders',          $settings->isSalesOrderSyncEnabled());
+                $view->with('featureInventory',       $settings->isInventorySyncEnabled());
+                $view->with('featureCustomers',       $settings->isCustomerSyncEnabled());
             } catch (\Throwable) {
-                $view->with('appName',        config('app.name', 'Connector'));
-                $view->with('erpDisplayName', 'ERP');
-                $view->with('ecomDisplayName','Ecommerce');
+                $view->with('appName',                config('app.name', 'Connector'));
+                $view->with('erpDisplayName',         'ERP');
+                $view->with('ecomDisplayName',        'Ecommerce');
+                $view->with('featureProducts',        true);
+                $view->with('featureOrders',          true);
+                $view->with('featureInventory',       true);
+                $view->with('featureCustomers',       true);
             }
         });
     }

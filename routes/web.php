@@ -81,7 +81,12 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
         Route::post('/{ecomId}/sync-back',       [OrdersController::class, 'syncBack'])        ->name('.sync-back');
     });
 	
-    Route::get('/inventory', [InventoryController::class, 'index'])->name('.inventory');
+    Route::get('/inventory',                      [InventoryController::class, 'index'])->name('.inventory');
+    Route::post('/inventory/fetch-stock',          [InventoryController::class, 'fetchStock'])->name('.inventory.fetch-stock');
+    Route::post('/inventory/post-stock',           [InventoryController::class, 'postStock'])->name('.inventory.post-stock');
+    Route::post('/inventory/{erpId}/fetch-stock',  [InventoryController::class, 'fetchStockSingle'])->name('.inventory.fetch-stock-single');
+    Route::post('/inventory/{erpId}/post-stock',   [InventoryController::class, 'postStockSingle'])->name('.inventory.post-stock-single');
+    Route::get('/inventory/{erpId}/stock-info',    [InventoryController::class, 'stockInfo'])->name('.inventory.stock-info');
 	
 	Route::prefix('product-cache')->name('.product-cache')->group(function () {
 		Route::get('/',                              [ProductCacheController::class, 'index'])    ->name('.index');
