@@ -67,6 +67,13 @@ interface ErpInterface
      */
     public function availableQty(array $quant): int;
 
+    /**
+     * Get fulfilled/dispatched orders from ERP.
+     * Returns stock.picking records in 'done' state linked to sale orders.
+     * Used by Fetch Dispatch and Post Dispatch.
+     */
+    public function getFulfilledOrders(?string $sinceDate = null): array;
+
     // ── Orders ───────────────────────────────────────────────────────────
 
     /**

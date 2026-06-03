@@ -76,6 +76,7 @@ class FieldConfigController extends Controller
             'max_length'          => 'nullable|integer|min:0',
             'is_active'           => 'boolean',
             'sort_order'          => 'nullable|integer',
+			'is_readonly' => 'boolean',
         ]);
 
         ProductFieldConfig::create(array_merge($data, [

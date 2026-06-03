@@ -19,14 +19,42 @@ use Illuminate\Support\Facades\Log;
  * between ANY ERP and ANY ecom platform.
  *
  * All field mappings come from product_field_configs table — nothing hardcoded.
- * Adding a new entity: add rows in product_field_configs for that entity_type.
- * Adding a new driver: implement ErpInterface or EcomInterface.
+ * Adding a new entity : add rows in product_field_configs for that entity_type.
+ * Adding a new driver : implement ErpInterface or EcomInterface.
+ *
+ * ── HOW LINE ITEMS WORK (no extra columns needed) ─────────────────────────
+ *
+ * Admin enters a dot-notation ecom_field that starts with the line-items array
+ * key, e.g.:
+ *
+ *   ecom_field = "line_items.price_set.presentment_money.amount"
+ *   erp_field  = "price_unit"
+ *   scope      = "header"
+ *
+ * The service detects that "line_items" is an array in the ecom payload,
+ * classifies this config as item-level, then for each item resolves
+ * "price_set.presentment_money.amount" within that item object.
+ *
+ * To tell the service which ERP field holds the line array (e.g. "order_line"
+ * in Odoo), create ONE header-scope row with transform = "line_container":
+ *
+ *   ecom_field = "line_items"    (the ecom array key)
+ *   erp_field  = "order_line"    (the ERP ORM field — any name for any ERP)
+ *   transform  = "line_container"
+ *   scope      = "header"
+ *
+ * If no line_container row exists, "order_line" is used as default.
+ *
+ * ── READONLY FIELDS ───────────────────────────────────────────────────────
+ *
+ * Mark is_readonly = true on fields computed by the ERP (e.g. amount_total,
+ * amount_untaxed in Odoo). They are skipped when building the ERP payload.
  */
 class UniversalSyncService
 {
     public function __construct(
-        private readonly EcomInterface $ecom,
-        private readonly ErpInterface  $erp,
+        private readonly EcomInterface   $ecom,
+        private readonly ErpInterface    $erp,
         private readonly SettingsService $settings
     ) {}
 
@@ -66,8 +94,8 @@ class UniversalSyncService
 
         try {
             if ($mapping && $mapping->ecom_id) {
-                $result  = $this->updateInEcom($entityType, $mapping->ecom_id, $ecomPayload);
-                $ecomId  = $mapping->ecom_id;
+                $result = $this->updateInEcom($entityType, $mapping->ecom_id, $ecomPayload);
+                $ecomId = $mapping->ecom_id;
                 Log::info("UniversalSyncService: updated {$entityType} #{$erpId} → {$this->ecom->driverName()} #{$ecomId}");
             } else {
                 $result = $this->createInEcom($entityType, $ecomPayload);
@@ -102,14 +130,7 @@ class UniversalSyncService
             throw new \RuntimeException("Entity [{$entityType}] is not active.");
         }
 
-        $fieldConfigs = $this->getFieldConfigs($entityType, $scope);
-
-        if ($fieldConfigs->isEmpty()) {
-            Log::warning("UniversalSyncService: No field configs for {$entityType}, scope={$scope}");
-            return [];
-        }
-
-        $erpPayload = $this->buildErpPayload($ecomData, $fieldConfigs);
+        $erpPayload = $this->buildErpPayloadFull($entityType, $ecomData, $scope ?? 'header');
         $ecomId     = (string) ($ecomData['id'] ?? '');
 
         $mapping = SyncMapping::where('entity_type', $entityType)
@@ -154,6 +175,13 @@ class UniversalSyncService
         return array_merge($result, ['id' => $erpId, 'erp_id' => $erpId]);
     }
 
+    // ── Public payload builder ────────────────────────────────────────────
+
+    public function buildErpPayloadOnly(string $entityType, array $ecomData, string $scope = 'header'): array
+    {
+        return $this->buildErpPayloadFull($entityType, $ecomData, $scope);
+    }
+
     // ── Field config loader ───────────────────────────────────────────────
 
     private function getFieldConfigs(string $entityType, ?string $scope): \Illuminate\Support\Collection
@@ -179,6 +207,9 @@ class UniversalSyncService
 
     // ── Payload builders ──────────────────────────────────────────────────
 
+    /**
+     * ERP → Ecom payload builder.
+     */
     private function buildEcomPayload(array $erpData, \Illuminate\Support\Collection $fieldConfigs): array
     {
         $payload = [];
@@ -209,18 +240,126 @@ class UniversalSyncService
         return $payload;
     }
 
-    private function buildErpPayload(array $ecomData, \Illuminate\Support\Collection $fieldConfigs): array
-    {
+    /**
+     * Ecom → ERP payload builder.
+     *
+     * Automatically detects item-level fields by inspecting ecom_field:
+     * if the root segment of the dot-path resolves to an array in ecomData,
+     * the config is treated as a line-item field — no extra DB column needed.
+     *
+     * Example:
+     *   ecom_field = "line_items.price_set.presentment_money.amount"
+     *   → root "line_items" is an array → item-level
+     *   → resolved per item as "price_set.presentment_money.amount"
+     *
+     * The ERP container field name comes from the row with transform = "line_container".
+     * Falls back to "order_line" if none exists.
+     */
+    private function buildErpPayloadFull(string $entityType, array $ecomData, string $scope): array
+{
+    $headerConfigs    = $this->getFieldConfigs($entityType, 'header');
+    $lineConfigs      = $this->getFieldConfigs($entityType, 'line');
+
+    $lineItemsKey = null;
+    $erpLineField = 'order_line';
+
+    // ── Find line_container row from header configs ────────────────────
+    foreach ($headerConfigs as $config) {
+        if ($config->transform === 'line_container') {
+            $erpLineField = $config->erp_field ?: 'order_line';
+            break;
+        }
+    }
+
+    // ── Detect line items array key from first line-scope config ──────
+    // e.g. "line_items.price_set.amount" → root = "line_items"
+    foreach ($lineConfigs as $config) {
+        $root = explode('.', $config->ecom_field ?? '')[0];
+        if (isset($ecomData[$root]) && is_array($ecomData[$root])) {
+            $lineItemsKey = $root;
+            break;
+        }
+    }
+
+    $payload = [];
+
+    // ── Header fields ─────────────────────────────────────────────────
+    foreach ($headerConfigs as $config) {
+        if (!empty($config->is_readonly))      continue;
+        if ($config->transform === 'line_container') continue;
+        if (empty($config->erp_field))         continue;
+
+        $value = $this->getNestedValue($ecomData, $config->ecom_field ?? '');
+        if ($value === null) $value = $config->default_value;
+
+        if ($value !== null && $config->transform) {
+            $value = $this->applyTransform($value, $config->transform, $ecomData);
+        }
+
+        if ($value !== null) {
+            $payload[$config->erp_field] = $value;
+        }
+    }
+
+    // ── Line item fields → ORM commands ──────────────────────────────
+    if ($lineConfigs->isNotEmpty() && $lineItemsKey) {
+        $lineItems    = $ecomData[$lineItemsKey] ?? [];
+        $lineCommands = [];
+		
+		
+
+        foreach ($lineItems as $item) {
+            $linePayload = $this->buildSingleLinePayload($item, $lineConfigs, $lineItemsKey);
+            if (!empty($linePayload)) {
+                $lineCommands[] = [0, 0, $linePayload];
+            }
+        }
+
+        if (!empty($lineCommands)) {
+            $payload[$erpLineField] = $lineCommands;
+        }
+    }
+
+    return $payload;
+}
+
+    /**
+     * Build payload for a single line item.
+     *
+     * Strips the array root prefix from ecom_field before resolving:
+     *   "line_items.price_set.presentment_money.amount"
+     *   → resolves "price_set.presentment_money.amount" on the item object
+     *
+     * Scope=line configs (no prefix) are resolved directly on the item.
+     */
+    private function buildSingleLinePayload(
+        array $itemData,
+        \Illuminate\Support\Collection $lineConfigs,
+        ?string $lineItemsKey = null
+    ): array {
         $payload = [];
 
-        foreach ($fieldConfigs as $config) {
-            if (empty($config->erp_field)) continue;
+        foreach ($lineConfigs as $config) {
+            if (!empty($config->is_readonly)) continue;
+            if (empty($config->erp_field))   continue;
 
-            $value = $this->getNestedValue($ecomData, $config->ecom_field ?? '');
+            $ecomField = $config->ecom_field ?? '';
 
+            // Strip root prefix: "line_items.price_set.amount" → "price_set.amount"
+            if ($lineItemsKey && str_starts_with($ecomField, $lineItemsKey . '.')) {
+                $ecomField = substr($ecomField, strlen($lineItemsKey) + 1);
+            }
+
+            $value = $this->getNestedValue($itemData, $ecomField);
             if ($value === null) $value = $config->default_value;
 
-            $payload[$config->erp_field] = $value;
+            if ($value !== null && $config->transform) {
+                $value = $this->applyTransform($value, $config->transform, $itemData);
+            }
+
+            if ($value !== null) {
+                $payload[$config->erp_field] = $value;
+            }
         }
 
         return $payload;
@@ -228,10 +367,6 @@ class UniversalSyncService
 
     // ── Actual API calls — mapped by entity type ──────────────────────────
 
-    /**
-     * Routes ecom CREATE call to the correct EcomInterface method by entity type.
-     * No hardcoded field names — payload is already built from field configs.
-     */
     private function createInEcom(string $entityType, array $payload): array
     {
         return match ($entityType) {
@@ -241,9 +376,6 @@ class UniversalSyncService
         };
     }
 
-    /**
-     * Routes ecom UPDATE call to the correct EcomInterface method by entity type.
-     */
     private function updateInEcom(string $entityType, string $ecomId, array $payload): array
     {
         return match ($entityType) {
@@ -261,9 +393,6 @@ class UniversalSyncService
         };
     }
 
-    /**
-     * Routes ERP CREATE call to the correct ErpInterface method by entity type.
-     */
     private function createInErp(string $entityType, array $payload): array
     {
         $id = match ($entityType) {
@@ -275,9 +404,6 @@ class UniversalSyncService
         return ['id' => $id];
     }
 
-    /**
-     * Routes ERP UPDATE call to the correct ErpInterface method by entity type.
-     */
     private function updateInErp(string $entityType, int $erpId, array $payload): array
     {
         match ($entityType) {
@@ -293,7 +419,8 @@ class UniversalSyncService
     private function applyTransform(mixed $value, string $transform, array $context = []): mixed
     {
         return match ($transform) {
-            'number_format'          => number_format((float) $value, 2, '.', ''),
+            'number_format' => (float) number_format((float) $value, 2, '.', ''),
+			'parse_int' => (int) $value,
             'number_format_nullable' => $value == 0 ? null : number_format((float) $value, 2, '.', ''),
             'boolean_status'         => $value ? 'active' : 'draft',
             'boolean_to_status'      => $value ? 'active' : 'draft',
@@ -302,6 +429,7 @@ class UniversalSyncService
             'strip_tags'             => strip_tags((string) $value),
             'parse_float'            => (float) $value,
             'status_to_boolean'      => in_array($value, ['active', 'publish', 'published', true, 1]),
+            'line_container'         => $value,
             default                  => $value,
         };
     }

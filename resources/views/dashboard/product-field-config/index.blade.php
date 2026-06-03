@@ -152,6 +152,15 @@
                         </button>
                     </form>
                 </td>
+				
+				{{-- Readonly --}}
+                <td class="px-4 py-3">
+                    @if($config->is_readonly)
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">Readonly</span>
+                    @else
+                        <span class="text-gray-300 text-xs">—</span>
+                    @endif
+                </td>
 
                 <td class="px-4 py-3 text-right">
                     <div class="flex items-center justify-end gap-2">
@@ -212,8 +221,9 @@
                     {{ $ecomDisplayName }} Field <span class="text-red-500">*</span>
                 </label>
                 @php
+                    // template_fields (product), variant_fields (product), or fields (all other entities)
                     $allEcomFields = array_merge(
-                        $ecomFields['template_fields'] ?? $ecomFields['fields'] ?? [],
+                        !empty($ecomFields['template_fields']) ? $ecomFields['template_fields'] : ($ecomFields['fields'] ?? []),
                         $ecomFields['variant_fields'] ?? []
                     );
                 @endphp
@@ -271,7 +281,8 @@
                 </label>
                 @php $erpFieldList = $erpFields['fields'] ?? array_merge($erpFields['template_fields'] ?? [], $erpFields['variant_fields'] ?? []); @endphp
                 @if(!empty($erpFieldList))
-                <select @change="onErpFieldChange(); form.erp_field = $event.target.value"
+                <select :value="form.erp_field"
+                        @change="form.erp_field = $event.target.value; onErpFieldChange()"
                         class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none">
                     <option value="">— Select a {{ $erpDisplayName }} field —</option>
                     @foreach($erpFieldList as $f)
@@ -291,7 +302,8 @@
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">{{ $erpDisplayName }} Field 2</label>
                     @if(!empty($erpFieldList))
-                    <select @change="form.erp_field_2 = $event.target.value"
+                    <select :value="form.erp_field_2"
+                            @change="form.erp_field_2 = $event.target.value"
                             class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-300 outline-none">
                         <option value="">— Select a {{ $erpDisplayName }} field —</option>
                         @foreach($erpFieldList as $f)
@@ -342,6 +354,8 @@
                     <option value="boolean_status">Boolean → active / draft</option>
                     <option value="array_second">Array Second Value [id, name] → name</option>
                     <option value="base64_image">Base64 → image array</option>
+                    <option value="line_container">Line Container (maps array of line items to ERP ORM commands)</option>
+                    <option value="parse_int">parse_int</option>
                 </select>
             </div>
 
@@ -372,6 +386,16 @@
                            class="rounded text-indigo-600">
                     <label for="modal_is_active" class="text-sm text-gray-700 cursor-pointer">Active</label>
                 </div>
+				<div class="flex items-center gap-2 pb-2">
+                    <input type="checkbox" name="is_readonly" value="1" id="modal_is_readonly"
+                           :checked="form.is_readonly"
+                           @change="form.is_readonly = $event.target.checked"
+                           class="rounded text-amber-500">
+                    <label for="modal_is_readonly" class="text-sm text-gray-700 cursor-pointer">
+                        Readonly
+                        <span class="text-xs text-gray-400 block font-normal">ERP computes this</span>
+                    </label>
+                </div>
             </div>
 
             <div class="flex items-center justify-between pt-2 border-t border-gray-100">
@@ -396,7 +420,7 @@ function fieldConfigApp() {
         showModal: false,
         editId: null,
 
-        ecomFields: @json(array_merge($ecomFields['template_fields'] ?? $ecomFields['fields'] ?? [], $ecomFields['variant_fields'] ?? [])),
+        ecomFields: @json(array_merge(!empty($ecomFields['template_fields']) ? $ecomFields['template_fields'] : ($ecomFields['fields'] ?? []), $ecomFields['variant_fields'] ?? [])),
         erpFields:  @json($erpFields['fields'] ?? array_merge($erpFields['template_fields'] ?? [], $erpFields['variant_fields'] ?? [])),
 
         form: {
@@ -424,7 +448,7 @@ function fieldConfigApp() {
                 scope: '{{ $entity->scopes[0] ?? "header" }}',
                 default_value: '', transform: '',
                 min_length: '', max_length: '',
-                sort_order: 0, is_active: true,
+                sort_order: 0, is_active: true, is_readonly: false,
             };
             this.$nextTick(() => {
                 this.$refs.form.action = '{{ route('dashboard.product-field-config.store') }}';
@@ -451,6 +475,7 @@ function fieldConfigApp() {
                 max_length:        config.max_length        || '',
                 sort_order:        config.sort_order        || 0,
                 is_active:         config.is_active,
+				is_readonly:       !!config.is_readonly,
             };
             this.$nextTick(() => {
                 this.$refs.form.action = '/dashboard/product-field-config/' + config.id;

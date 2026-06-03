@@ -19,8 +19,7 @@ class SyncMapping extends Model
         'erp_updated_at',
         'ecom_updated_at',
         'last_sync_direction',
-        
-        // Old column names for backwards compatibility
+		'ecom_status',
         'odoo_id',
         'shopify_id',
         'shopify_secondary_id',

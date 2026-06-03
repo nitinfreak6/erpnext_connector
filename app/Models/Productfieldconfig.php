@@ -31,6 +31,8 @@ class ProductFieldConfig extends Model
         'max_length',
         'is_active',
         'sort_order',
+		'is_item_level',
+		'is_readonly',
         
         // DEPRECATED (backwards compatibility)
         'odoo_field',
@@ -44,6 +46,8 @@ class ProductFieldConfig extends Model
         'min_length' => 'integer',
         'max_length' => 'integer',
         'sort_order' => 'integer',
+		'is_item_level' => 'boolean',
+		'is_readonly' => 'boolean',
     ];
 
     // Available transform options (shown in UI)
@@ -56,6 +60,8 @@ class ProductFieldConfig extends Model
             'boolean_status'       => 'Boolean → active/draft',
             'array_second'         => 'Array Second Value (e.g. [id, name] → name)',
             'base64_image'         => 'Base64 Image → Shopify images array',
+			'line_container' => 'Line Container (maps array of line items to ERP ORM commands)',
+
         ];
     }
 
