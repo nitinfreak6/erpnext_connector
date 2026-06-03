@@ -85,7 +85,16 @@ class CustomersController extends Controller
             $query->having('latest_log_status', $status);
         }
 
-        return $query->paginate($perPage)->withQueryString();
+        $results = $query->paginate($perPage)->withQueryString();
+
+        // Enrich with name/email from stored metadata (raw ERP partner data)
+        $results->getCollection()->transform(function ($mapping) {
+            [$mapping->customer_name, $mapping->customer_email] = $this->extractMetaNameEmail($mapping->metadata);
+            $mapping->latest_log_status = $mapping->latest_log_status ?? 'pending';
+            return $mapping;
+        });
+
+        return $results;
     }
 
     private function getEcomToErpCustomers(?string $search, string $status, int $perPage)
@@ -110,8 +119,10 @@ class CustomersController extends Controller
                 ->where('direction', 'ecom_to_erp')
                 ->latest()
                 ->first();
-            
+
             $customer->latest_log_status = $latestLog?->status ?? 'pending';
+
+            [$customer->customer_name, $customer->customer_email] = $this->extractMetaNameEmail($customer->metadata);
             return $customer;
         });
 
@@ -207,4 +218,34 @@ class CustomersController extends Controller
             ucfirst($this->settings->ecomDriver())
         ));
     }
+
+
+    /**
+     * Safely extract name and email from raw metadata.
+     * Handles null, string (JSON), array, double-encoded JSON, and Odoo false values.
+     */
+    private function extractMetaNameEmail(mixed $metadata): array
+    {
+        if (empty($metadata)) {
+            return [null, null];
+        }
+
+        // Decode if string
+        $meta = is_array($metadata) ? $metadata : json_decode($metadata, true);
+
+        // Handle double-encoded
+        if (is_string($meta)) {
+            $meta = json_decode($meta, true);
+        }
+
+        if (!is_array($meta)) {
+            return [null, null];
+        }
+
+        $name  = isset($meta['name'])  && $meta['name']  !== false ? (string) $meta['name']  : null;
+        $email = isset($meta['email']) && $meta['email'] !== false ? (string) $meta['email'] : null;
+
+        return [$name, $email];
+    }
+
 }

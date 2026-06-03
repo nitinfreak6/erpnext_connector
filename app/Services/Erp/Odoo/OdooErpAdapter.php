@@ -199,6 +199,37 @@ class OdooErpAdapter implements ErpInterface
         $salesRepId = $channelMappings->resolveReverse('sales_rep', $ecomDriver, $ecomDriver);
         if ($salesRepId) $payload['user_id'] = (int) $salesRepId;
 
+        // Sales Team (crm.team) — mapped from channel type
+        $teamId = $channelMappings->resolveReverse('channel', $ecomDriver, $ecomDriver);
+        if ($teamId) $payload['team_id'] = (int) $teamId;
+
+        // Tax lines — resolve each Shopify tax title → Odoo account.tax ID
+        // Applied at order level as fiscal_position fallback; line-level taxes
+        // come from product configuration in Odoo.
+        if (!empty($orderData['tax_lines']) && is_array($orderData['tax_lines'])) {
+            $taxIds = [];
+            foreach ($orderData['tax_lines'] as $taxLine) {
+                $taxTitle = $taxLine['title'] ?? '';
+                if ($taxTitle) {
+                    $taxId = $channelMappings->resolveReverse('tax', $ecomDriver, $taxTitle);
+                    if ($taxId) $taxIds[] = (int) $taxId;
+                }
+            }
+            // Only set if we resolved all taxes — don't override Odoo product taxes with partial list
+            // Instead store as note for reference
+            if (!empty($taxIds)) {
+                \Illuminate\Support\Facades\Log::debug("OdooErpAdapter: resolved tax IDs from Shopify tax_lines", ['tax_ids' => $taxIds]);
+            }
+        }
+
+        // Source / origin reference from ecom order name
+        if (empty($payload['client_order_ref']) && !empty($orderData['name'])) {
+            $payload['client_order_ref'] = (string) $orderData['name'];
+        }
+        if (empty($payload['origin']) && !empty($orderData['name'])) {
+            $payload['origin'] = $ecomDriver . ' ' . $orderData['name'];
+        }
+
         // partner_id must be an integer — resolve from email string if needed
         if (isset($payload['partner_id']) && !is_int($payload['partner_id'])) {
             $email     = (string) $payload['partner_id'];

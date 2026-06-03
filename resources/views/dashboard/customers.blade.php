@@ -218,9 +218,9 @@
                         {{-- ERP → Ecom data --}}
                         <td class="px-4 py-3 text-gray-700 font-medium">#{{ $Customer->erp_id ?? $Customer->odoo_id }}</td>
                         <td class="px-4 py-3">
-                            <div class="text-gray-900 font-medium">{{ Str::limit($Customer->name ?? '—', 40) }}</div>
+                            <div class="text-gray-900 font-medium">{{ Str::limit($Customer->customer_name ?? '—', 40) }}</div>
                         </td>
-                        <td class="px-4 py-3 text-gray-600 font-mono text-xs">{{ $Customer->email ?? '—' }}</td>
+                        <td class="px-4 py-3 text-gray-600 font-mono text-xs">{{ $Customer->customer_email ?? '—' }}</td>
                         <td class="px-4 py-3 text-gray-600">
                             @if($Customer->ecom_id)
                                 <span class="font-mono text-xs">{{ $Customer->ecom_id }}</span>

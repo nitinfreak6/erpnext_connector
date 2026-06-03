@@ -4,6 +4,7 @@ namespace App\Jobs\Erp;
 
 use App\Jobs\Ecom\PushInventoryToEcomJob;
 use App\Jobs\Amazon\PushInventoryToAmazonJob;
+use App\Models\SyncMapping;
 use App\Models\SyncQueueState;
 use App\Services\Erp\ErpInterface;
 use App\Services\SettingsService;
@@ -18,8 +19,12 @@ class FetchErpInventoryJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public function __construct(private readonly ?int $locationId = null)
-    {
+    // $autoPush: when false (manual Fetch Stock button), only fetch and store as pending.
+    //            when true  (scheduled/cron runs), fetch + immediately dispatch push jobs.
+    public function __construct(
+        private readonly ?int  $locationId = null,
+        private readonly bool  $autoPush   = true,
+    ) {
         $this->onQueue('sync');
     }
 
@@ -66,12 +71,29 @@ class FetchErpInventoryJob implements ShouldQueue
             $latestWriteDate = $writeDate;
 
             foreach ($quants as $quant) {
-                // FIX #17: dispatch to generic ecom job — not hardcoded Shopify
-                PushInventoryToEcomJob::dispatch($quant);
+                if ($this->autoPush) {
+                    // Scheduled/cron: dispatch push immediately
+                    PushInventoryToEcomJob::dispatch($quant);
 
-                // Amazon is a secondary channel, stays conditional
-                if ($settings->isAmazonChannelEnabled()) {
-                    PushInventoryToAmazonJob::dispatch($quant);
+                    if ($settings->isAmazonChannelEnabled()) {
+                        PushInventoryToAmazonJob::dispatch($quant);
+                    }
+                } else {
+                    // Manual Fetch Stock button: store as pending so Post Stock can push later
+                    $erpId = (string) ($quant['product_id'][0] ?? $quant['id'] ?? '');
+                    SyncMapping::updateOrCreate(
+                        [
+                            'entity_type' => 'inventory',
+                            'erp_id'      => $erpId,
+                            'erp_driver'  => $settings->erpDriver(),
+                        ],
+                        [
+                            'ecom_status'          => 'pending',
+                            'metadata'             => $quant,
+                            'last_synced_at'       => now(),
+                            'last_sync_direction'  => 'erp_to_ecom',
+                        ]
+                    );
                 }
 
                 if ($quant['write_date'] > $latestWriteDate) {

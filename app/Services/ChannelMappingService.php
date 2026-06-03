@@ -34,7 +34,37 @@ class ChannelMappingService
             ->where('odoo_id', $odooId)
             ->first();
 
-        return $this->cache[$cacheKey] = $mapping?->external_id;
+        if (!$mapping) {
+            // Fall back to default_value if configured on any active mapping for this type/channel
+            $default = ChannelMapping::ofType($type)->forChannel($channel)->active()
+                ->whereNotNull('meta->default_value')->first();
+            return $this->cache[$cacheKey] = $default?->meta['default_value'] ?? null;
+        }
+
+        $value = $mapping->external_id;
+
+        // Apply meta transforms if configured
+        $meta = $mapping->meta ?? [];
+        if (!empty($meta['min_length']) && strlen($value) < (int) $meta['min_length']) {
+            $value = str_pad($value, (int) $meta['min_length'], '0', STR_PAD_LEFT);
+        }
+        if (!empty($meta['max_length'])) {
+            $value = substr($value, 0, (int) $meta['max_length']);
+        }
+
+        return $this->cache[$cacheKey] = $value;
+    }
+
+    /**
+     * Resolve with full mapping object (includes meta, labels, value fields).
+     */
+    public function resolveMapping(string $type, string $channel, string $odooId): ?ChannelMapping
+    {
+        return ChannelMapping::ofType($type)
+            ->forChannel($channel)
+            ->active()
+            ->where('odoo_id', $odooId)
+            ->first();
     }
 
     /**

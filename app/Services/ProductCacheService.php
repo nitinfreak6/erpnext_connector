@@ -85,26 +85,43 @@ class ProductCacheService
 
         $erpIdCol = ProductCache::hasEcomColumns() ? 'erp_id' : 'odoo_id';
 
-        $cache = ProductCache::updateOrCreate(
-            [$erpIdCol => $erpId],
-            [
-                'odoo_id'       => $erpId,
-                'erp_id'        => $erpId,
-                'name'          => $template['name'],
-                'default_code'  => $template['default_code'] ?: null,
-                'barcode'       => $template['barcode'] ?: null,
-                'product_type'  => $template['type'] ?? null,
-                'is_active'     => (bool) ($template['active'] ?? true),
-                'price'         => $template['list_price'] ?? null,
-                'cost'          => $template['standard_price'] ?? null,
-                'weight'        => $template['weight'] ?? null,
-                'category'      => $categoryName ?: null,
-                'variant_count' => count($variants),
-                'raw_data'      => $data,
-                'file_path'     => $filePath,
-                'fetched_at'    => now(),
-            ]
+        // When re-fetching a product that was already pushed (sent/skipped), reset its
+        // ecom status back to 'pending' so the Push button picks it up for re-push.
+        // New products (no existing row) have null status and are already picked up.
+        $existing    = ProductCache::where($erpIdCol, $erpId)->first();
+        $resetStatus = $existing && in_array(
+            $existing->ecom_status,
+            [ProductCache::STATUS_SENT, ProductCache::STATUS_SKIPPED],
+            true
         );
+
+        $updatePayload = [
+            'odoo_id'       => $erpId,
+            'erp_id'        => $erpId,
+            'name'          => $template['name'],
+            'default_code'  => $template['default_code'] ?: null,
+            'barcode'       => $template['barcode'] ?: null,
+            'product_type'  => $template['type'] ?? null,
+            'is_active'     => (bool) ($template['active'] ?? true),
+            'price'         => $template['list_price'] ?? null,
+            'cost'          => $template['standard_price'] ?? null,
+            'weight'        => $template['weight'] ?? null,
+            'category'      => $categoryName ?: null,
+            'variant_count' => count($variants),
+            'raw_data'      => $data,
+            'file_path'     => $filePath,
+            'fetched_at'    => now(),
+        ];
+
+        if ($resetStatus) {
+            $updatePayload['ecom_status']     = ProductCache::STATUS_PENDING;
+            $updatePayload['shopify_status']  = ProductCache::STATUS_PENDING;
+            $updatePayload['ecom_message']    = null;
+            $updatePayload['shopify_message'] = null;
+            Log::info("ProductCacheService: #{$erpId} was '{$existing->ecom_status}' — reset to pending for re-push.");
+        }
+
+        $cache = ProductCache::updateOrCreate([$erpIdCol => $erpId], $updatePayload);
 
         Log::info("ProductCacheService [{$this->erp->driverName()}]: cached #{$erpId} ({$template['name']})");
 

@@ -61,7 +61,8 @@ class ProductsController extends Controller
 			return back()->with('error', 'Sync mode is Ecom → ERP. Use Pull instead.');
 		}
 
-		FetchErpProductsJob::dispatchSync(fullSync: false);
+		// autoPush: false — manual Fetch button only fetches/caches. Use Push button to push.
+		FetchErpProductsJob::dispatchSync(fullSync: false, erpIds: null, autoPush: false);
 
 		$notes = \App\Models\SyncQueueState::forType('products')->fresh()->notes ?? '';
 
@@ -71,10 +72,10 @@ class ProductsController extends Controller
 
 		if (str_starts_with($notes, 'synced:')) {
 			$count = str_replace('synced:', '', $notes);
-			return back()->with('success', "{$count} product(s) fetched from " . $this->settings->erpDisplayName() . ' and queued for ' . $this->settings->ecomDisplayName() . '.');
+			return back()->with('success', "{$count} product(s) fetched from " . $this->settings->erpDisplayName() . '. Use "Push to ' . $this->settings->ecomDisplayName() . '" to sync.');
 		}
 
-		return back()->with('success', 'Fetch completed from ' . $this->settings->erpDisplayName() . '.');
+		return back()->with('success', 'Fetch completed from ' . $this->settings->erpDisplayName() . '. Use "Push" to send products to ' . $this->settings->ecomDisplayName() . '.');
 	}
 
 	// ── Pull: ecom → ERP (incremental, new/updated only) ─────────────────────

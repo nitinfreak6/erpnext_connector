@@ -110,10 +110,36 @@ class UniversalSyncService
                 $ecomId = (string) ($result['id'] ?? '');
 
                 if ($ecomId && $erpId) {
-                    SyncMapping::updateOrCreate(
-                        ['entity_type' => $entityType, 'erp_id' => $erpId, 'erp_driver' => $this->erp->driverName()],
-                        ['ecom_id' => $ecomId, 'ecom_driver' => $this->ecom->driverName(), 'last_synced_at' => now(), 'last_sync_direction' => 'erp_to_ecom']
-                    );
+                    // Guard against UniqueConstraintViolation:
+                    // A row may already exist matched by ecom_id (e.g. customer existed in Shopify
+                    // before the mapping was stored). Check both erp_id and ecom_id before inserting.
+                    $existing = SyncMapping::where('entity_type', $entityType)
+                        ->where(function ($q) use ($erpId, $ecomId, $entityType) {
+                            $q->where('erp_id', $erpId)
+                              ->orWhere('ecom_id', $ecomId);
+                        })
+                        ->first();
+
+                    if ($existing) {
+                        $existing->update([
+                            'erp_id'              => $erpId,
+                            'ecom_id'             => $ecomId,
+                            'erp_driver'          => $this->erp->driverName(),
+                            'ecom_driver'         => $this->ecom->driverName(),
+                            'last_synced_at'      => now(),
+                            'last_sync_direction' => 'erp_to_ecom',
+                        ]);
+                    } else {
+                        SyncMapping::create([
+                            'entity_type'         => $entityType,
+                            'erp_id'              => $erpId,
+                            'ecom_id'             => $ecomId,
+                            'erp_driver'          => $this->erp->driverName(),
+                            'ecom_driver'         => $this->ecom->driverName(),
+                            'last_synced_at'      => now(),
+                            'last_sync_direction' => 'erp_to_ecom',
+                        ]);
+                    }
                 }
 
                 Log::info("UniversalSyncService: created {$entityType} #{$erpId} → {$this->ecom->driverName()} #{$ecomId}");

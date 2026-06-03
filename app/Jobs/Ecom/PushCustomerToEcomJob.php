@@ -39,8 +39,15 @@ class PushCustomerToEcomJob implements ShouldQueue
                 return;
             }
 
+            // Skip customers with no email — Shopify requires it for customerCreate
+            $email = $this->customerData['email'] ?? null;
+            if (empty($email) || $email === false) {
+                Log::info("PushCustomerToEcomJob: skipping customer #{$customerId} — no email address.");
+                return;
+            }
+
             // Sync customer to ecom platform
-            $customerSync->syncCustomer($this->customerData);
+            $customerSync->syncCustomerToEcom($this->customerData);
             
             Log::debug("PushCustomerToEcomJob: Customer #{$customerId} synced successfully");
             

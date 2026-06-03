@@ -38,6 +38,11 @@ class ShopifyCustomerService
      */
     public function create(array $customerData): array
     {
+        // Shopify requires email for customerCreate — skip customers with no email
+        if (empty($customerData['email']) || $customerData['email'] === false) {
+            throw new \RuntimeException('Shopify customerCreate: email is required but missing or empty for this customer.');
+        }
+
         $input = $this->buildGraphQLInput($customerData);
 
         $mutation = $this->customerFragment() . <<<'GQL'
@@ -53,6 +58,23 @@ class ShopifyCustomerService
         $errors = $this->graphql->extractUserErrors($data, 'customerCreate');
 
         if (!empty($errors)) {
+            // If the only error is a duplicate email, find the existing customer and update instead.
+            $isDuplicateEmail = count($errors) === 1
+                && stripos($errors[0], 'email') !== false
+                && stripos($errors[0], 'already been taken') !== false;
+
+            if ($isDuplicateEmail && !empty($customerData['email'])) {
+                Log::info("ShopifyCustomerService::create — email already exists, falling back to update for: {$customerData['email']}");
+
+                $existing = $this->findByEmail($customerData['email']);
+                if ($existing) {
+                    $existingId = $existing['id'] ?? null;
+                    if ($existingId) {
+                        return $this->update((string) $existingId, $customerData);
+                    }
+                }
+            }
+
             throw new \RuntimeException('Shopify customerCreate errors: ' . implode('; ', $errors));
         }
 
@@ -166,11 +188,16 @@ class ShopifyCustomerService
     {
         $nameParts = explode(' ', $partner['name'], 2);
 
+        // Odoo returns false for empty fields — normalise to empty string / null
+        $email  = ($partner['email']  && $partner['email']  !== false) ? (string) $partner['email']  : null;
+        $phone  = ($partner['phone']  && $partner['phone']  !== false) ? (string) $partner['phone']  :
+                  (($partner['mobile'] && $partner['mobile'] !== false) ? (string) $partner['mobile'] : null);
+
         $payload = [
             'first_name'        => $nameParts[0],
             'last_name'         => $nameParts[1] ?? '',
-            'email'             => $partner['email'] ?? '',
-            'phone'             => $partner['phone'] ?? $partner['mobile'] ?? '',
+            'email'             => $email,
+            'phone'             => $phone,
             'accepts_marketing' => !($partner['opt_out'] ?? false),
         ];
 
@@ -194,10 +221,11 @@ class ShopifyCustomerService
     {
         $input = [];
 
-        if (isset($payload['first_name']))  $input['firstName'] = $payload['first_name'];
-        if (isset($payload['last_name']))   $input['lastName']  = $payload['last_name'];
-        if (isset($payload['email']))       $input['email']     = $payload['email'];
-        if (isset($payload['phone']))       $input['phone']     = $payload['phone'] ?: null;
+        // Use !== null checks — isset() passes false through, which Shopify rejects as invalid String
+        if (!empty($payload['first_name']))                    $input['firstName'] = (string) $payload['first_name'];
+        if (array_key_exists('last_name', $payload))          $input['lastName']  = (string) ($payload['last_name'] ?? '');
+        if (!empty($payload['email']) && $payload['email'] !== false) $input['email'] = (string) $payload['email'];
+        if (!empty($payload['phone']) && $payload['phone'] !== false) $input['phone'] = (string) $payload['phone'];
 
         // REMOVED: emailMarketingConsent - Shopify requires separate mutation
         // If you need to update marketing consent, use customerEmailMarketingConsentUpdate mutation

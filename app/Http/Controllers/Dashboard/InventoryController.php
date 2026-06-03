@@ -112,9 +112,11 @@ class InventoryController extends Controller
     public function fetchStock(Request $request)
     {
         try {
-            FetchErpInventoryJob::dispatchSync();
+            // autoPush: false — manual Fetch Stock button only fetches/stores as pending.
+            // Use "Post Stock" button to push to ecom.
+            FetchErpInventoryJob::dispatchSync(locationId: null, autoPush: false);
             return redirect()->route('dashboard.inventory')
-                ->with('success', 'Stock fetched from ' . $this->settings->erpDisplayName() . ' and queued for push.');
+                ->with('success', 'Stock fetched from ' . $this->settings->erpDisplayName() . '. Use "Post Stock" to push updates.');
         } catch (\Throwable $e) {
             return redirect()->route('dashboard.inventory')
                 ->with('error', 'Fetch stock failed: ' . $e->getMessage());

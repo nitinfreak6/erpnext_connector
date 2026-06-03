@@ -23,9 +23,12 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
 
     // FIX #15: removed $shopify and $amazon boolean params.
     // Push destinations are resolved from the active driver settings at runtime.
+    // $autoPush: when false (manual button click), only fetch/cache — do NOT dispatch push jobs.
+    //            when true  (scheduled/cron runs), fetch + immediately queue push as before.
     public function __construct(
-        private readonly bool   $fullSync = false,
-        private readonly ?array $erpIds   = null,
+        private readonly bool   $fullSync  = false,
+        private readonly ?array $erpIds    = null,
+        private readonly bool   $autoPush  = true,
     ) {}
 
     public function handle(ErpInterface $erp, ProductCacheService $cache, SettingsService $settings): void
@@ -96,7 +99,9 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
                 Log::warning("FetchErpProductsJob: cache failed for #{$product['id']}: " . $e->getMessage());
             }
 
-            $this->dispatchPushJobs((int) $product['id'], $settings);
+            if ($this->autoPush) {
+                $this->dispatchPushJobs((int) $product['id'], $settings);
+            }
 
             if (($product['write_date'] ?? '') > $latestWriteDate) {
                 $latestWriteDate = $product['write_date'];
@@ -135,7 +140,9 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
                     continue;
                 }
 
-                $this->dispatchPushJobs((int) $product['id'], $settings);
+                if ($this->autoPush) {
+                    $this->dispatchPushJobs((int) $product['id'], $settings);
+                }
 
                 if (($product['write_date'] ?? '') > $latestWriteDate) {
                     $latestWriteDate = $product['write_date'];
@@ -163,7 +170,9 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
                 $cache->fetchAndCacheSingle((int) $erpId);
             }
 
-            $this->dispatchPushJobs((int) $erpId, $settings);
+            if ($this->autoPush) {
+                $this->dispatchPushJobs((int) $erpId, $settings);
+            }
         }
 
         Log::info('FetchErpProductsJob: manual re-push dispatched for ' . count($erpIds) . ' product(s).');

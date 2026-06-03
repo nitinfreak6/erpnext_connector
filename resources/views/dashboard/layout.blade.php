@@ -76,20 +76,22 @@
                 <p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Sync</p>
             </div>
 			
+@if($featureCustomers ?? true)
 			<a href="{{ route('dashboard.customers') }}"
 			   class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
-					  {{ request()->routeIs('dashboard.product-cache*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
+					  {{ request()->routeIs('dashboard.customers*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
 				<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-						  d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+						  d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
 				</svg>
 				Customers
 			</a>
+			@endif
 
-            @if(auth()->user()->hasPermission('view-products'))
+            @if(auth()->user()->hasPermission('view-products') && ($featureProducts ?? true))
            <a href="{{ route('dashboard.products') }}"
 			   class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors
-					  {{ request()->routeIs('dashboard.product-cache*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
+					  {{ request()->routeIs('dashboard.products*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
 				<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
 						  d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
@@ -98,9 +100,9 @@
 			</a>
             @endif
 
-            @if(auth()->user()->hasPermission('view-orders'))
+            @if(auth()->user()->hasPermission('view-orders') && ($featureOrders ?? true))
             <a href="{{ route('dashboard.orders') }}"
-               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.orders') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
+               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.orders*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
                 <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                           d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
@@ -109,9 +111,9 @@
             </a>
             @endif
 
-            @if(auth()->user()->hasPermission('view-inventory'))
+            @if(auth()->user()->hasPermission('view-inventory') && ($featureInventory ?? true))
             <a href="{{ route('dashboard.inventory') }}"
-               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.inventory') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
+               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.inventory*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
                 <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                           d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582 4 8 4m8-4c0-2.21-3.582 4-8 4"/>

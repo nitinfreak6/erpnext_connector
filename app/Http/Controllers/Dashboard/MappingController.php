@@ -55,18 +55,35 @@ class MappingController extends Controller
         abort_unless(in_array($type, $this->validTypes), 404);
 
         $data = $request->validate([
-            'channel'        => 'required|in:shopify,amazon,both',
-            'odoo_id'        => 'required|string|max:100',
-            'odoo_label'     => 'nullable|string|max:255',
-            'external_id'    => 'required|string|max:100',
-            'external_label' => 'nullable|string|max:255',
-            'is_active'      => 'boolean',
+            'channel'              => 'required|in:shopify,amazon,both',
+            'odoo_id'              => 'required|string|max:100',
+            'odoo_label'           => 'nullable|string|max:255',
+            'external_id'          => 'required|string|max:100',
+            'external_label'       => 'nullable|string|max:255',
+            'odoo_value_field'     => 'nullable|string|max:255',
+            'external_value_field' => 'nullable|string|max:255',
+            'default_value'        => 'nullable|string|max:500',
+            'min_length'           => 'nullable|string|max:50',
+            'max_length'           => 'nullable|string|max:50',
+            'is_active'            => 'boolean',
         ]);
 
-        ChannelMapping::create(array_merge($data, [
-            'type'      => $type,
-            'is_active' => $request->boolean('is_active', true),
-        ]));
+        ChannelMapping::create([
+            'type'          => $type,
+            'channel'       => $data['channel'],
+            'odoo_id'       => $data['odoo_id'],
+            'odoo_label'    => $data['odoo_label'] ?? null,
+            'external_id'   => $data['external_id'],
+            'external_label'=> $data['external_label'] ?? null,
+            'is_active'     => $request->boolean('is_active', true),
+            'meta'          => array_filter([
+                'odoo_value_field'     => $data['odoo_value_field']     ?? null,
+                'external_value_field' => $data['external_value_field'] ?? null,
+                'default_value'        => $data['default_value']        ?? null,
+                'min_length'           => $data['min_length']           ?? null,
+                'max_length'           => $data['max_length']           ?? null,
+            ]),
+        ]);
 
         return back()->with('success', 'Mapping added successfully.');
     }
@@ -79,17 +96,34 @@ class MappingController extends Controller
         abort_unless($mapping->type === $type, 404);
 
         $data = $request->validate([
-            'channel'        => 'required|in:shopify,amazon,both',
-            'odoo_id'        => 'required|string|max:100',
-            'odoo_label'     => 'nullable|string|max:255',
-            'external_id'    => 'required|string|max:100',
-            'external_label' => 'nullable|string|max:255',
-            'is_active'      => 'boolean',
+            'channel'              => 'required|in:shopify,amazon,both',
+            'odoo_id'              => 'required|string|max:100',
+            'odoo_label'           => 'nullable|string|max:255',
+            'external_id'          => 'required|string|max:100',
+            'external_label'       => 'nullable|string|max:255',
+            'odoo_value_field'     => 'nullable|string|max:255',
+            'external_value_field' => 'nullable|string|max:255',
+            'default_value'        => 'nullable|string|max:500',
+            'min_length'           => 'nullable|string|max:50',
+            'max_length'           => 'nullable|string|max:50',
+            'is_active'            => 'boolean',
         ]);
 
-        $mapping->update(array_merge($data, [
-            'is_active' => $request->boolean('is_active', true),
-        ]));
+        $mapping->update([
+            'channel'       => $data['channel'],
+            'odoo_id'       => $data['odoo_id'],
+            'odoo_label'    => $data['odoo_label'] ?? null,
+            'external_id'   => $data['external_id'],
+            'external_label'=> $data['external_label'] ?? null,
+            'is_active'     => $request->boolean('is_active', true),
+            'meta'          => array_filter([
+                'odoo_value_field'     => $data['odoo_value_field']     ?? null,
+                'external_value_field' => $data['external_value_field'] ?? null,
+                'default_value'        => $data['default_value']        ?? null,
+                'min_length'           => $data['min_length']           ?? null,
+                'max_length'           => $data['max_length']           ?? null,
+            ]),
+        ]);
 
         return back()->with('success', 'Mapping updated.');
     }
@@ -149,4 +183,86 @@ class MappingController extends Controller
 
         return back()->with('success', "Imported {$created} mappings.");
     }
+
+
+    // ── Odoo model per mapping type ──────────────────────────────────────
+    private function odooModelForType(string $type): ?string
+    {
+        return match ($type) {
+            ChannelMapping::TYPE_WAREHOUSE        => 'stock.location',
+            ChannelMapping::TYPE_SHIPPING         => 'delivery.carrier',
+            ChannelMapping::TYPE_CATEGORY         => 'product.category',
+            ChannelMapping::TYPE_PRICELIST        => 'product.pricelist',
+            ChannelMapping::TYPE_PAYMENT          => 'account.journal',
+            ChannelMapping::TYPE_CHANNEL          => 'crm.team',
+            ChannelMapping::TYPE_SALES_ORDER_TYPE => 'sale.order.type',
+            ChannelMapping::TYPE_SALES_REP        => 'res.users',
+            ChannelMapping::TYPE_PRODUCT_SIZE     => 'product.attribute.value',
+            ChannelMapping::TYPE_TAX              => 'account.tax',
+            default                               => null,
+        };
+    }
+
+    // ── Shopify fields per mapping type ──────────────────────────────────
+    private function shopifyFieldsForType(string $type): array
+    {
+        return match ($type) {
+            ChannelMapping::TYPE_WAREHOUSE        => ['id' => 'Location ID', 'name' => 'Location Name', 'address1' => 'Address'],
+            ChannelMapping::TYPE_SHIPPING         => ['title' => 'Shipping Title', 'price' => 'Price', 'code' => 'Code'],
+            ChannelMapping::TYPE_CATEGORY         => ['product_type' => 'Product Type', 'tags' => 'Tags'],
+            ChannelMapping::TYPE_PRICELIST        => ['currency' => 'Currency Code', 'presentment_currency' => 'Presentment Currency'],
+            ChannelMapping::TYPE_PAYMENT          => ['gateway' => 'Gateway', 'payment_gateway_names' => 'Gateway Names'],
+            ChannelMapping::TYPE_CHANNEL          => ['source_name' => 'Source Name', 'referring_site' => 'Referring Site'],
+            ChannelMapping::TYPE_SALES_ORDER_TYPE => ['source_name' => 'Source Name', 'gateway' => 'Gateway'],
+            ChannelMapping::TYPE_SALES_REP        => ['source_name' => 'Source Name'],
+            ChannelMapping::TYPE_PRODUCT_SIZE     => ['value' => 'Option Value', 'name' => 'Option Name'],
+            ChannelMapping::TYPE_TAX              => ['title' => 'Tax Title', 'rate' => 'Rate', 'price' => 'Tax Price'],
+            default                               => [],
+        };
+    }
+
+    /**
+     * Fetch Odoo ERP fields for a mapping type.
+     */
+    public function fetchErpFields(Request $request, string $type): \Illuminate\Http\JsonResponse
+    {
+        abort_unless(in_array($type, $this->validTypes), 404);
+
+        $model = $this->odooModelForType($type);
+        if (!$model) {
+            return response()->json(['fields' => [], 'label' => $type]);
+        }
+
+        try {
+            $odoo   = app(\App\Services\Odoo\OdooService::class);
+            $domain = match ($type) {
+                ChannelMapping::TYPE_WAREHOUSE => [['usage', '=', 'internal']],
+                ChannelMapping::TYPE_PAYMENT   => [['type', 'in', ['bank', 'cash', 'general']]],
+                default                        => [],
+            };
+            $records = $odoo->searchRead($model, $domain, ['id', 'name', 'display_name'], ['limit' => 200]);
+            $fields  = array_map(fn($r) => [
+                'id'    => (string) $r['id'],
+                'label' => $r['display_name'] ?? $r['name'] ?? "#{$r['id']}",
+            ], $records);
+
+            return response()->json(['fields' => $fields, 'model' => $model]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage(), 'fields' => []], 422);
+        }
+    }
+
+    /**
+     * Fetch Shopify/Ecom fields for a mapping type (static definitions).
+     */
+    public function fetchEcomFields(Request $request, string $type): \Illuminate\Http\JsonResponse
+    {
+        abort_unless(in_array($type, $this->validTypes), 404);
+
+        $raw    = $this->shopifyFieldsForType($type);
+        $fields = array_map(fn($key, $label) => ['key' => $key, 'label' => $label], array_keys($raw), array_values($raw));
+
+        return response()->json(['fields' => $fields, 'type' => $type]);
+    }
+
 }
