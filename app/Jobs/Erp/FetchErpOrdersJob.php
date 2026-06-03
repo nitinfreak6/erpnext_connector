@@ -72,14 +72,52 @@ class FetchErpOrdersJob implements ShouldQueue
                     ->first();
 
                 if (!$mapping) {
-                    Log::info("FetchErpOrdersJob: order #{$orderId} not mapped, creating in ecom");
+                    // Order not in ecom yet — push it
+                    Log::info("FetchErpOrdersJob: order #{$orderId} not in ecom, pushing");
                     PushOrderToEcomJob::dispatch((int) $orderId);
-                } else {
-                    // FIX #16: use generic ecom push jobs, not Shopify-specific
-                    if ($order['state'] === 'cancel') {
-                        PushCancellationToEcomJob::dispatch($orderId);
-                    } else {
-                        PushFulfillmentToEcomJob::dispatch($order);
+
+                } elseif ($order['state'] === 'cancel') {
+                    PushCancellationToEcomJob::dispatch($orderId);
+
+                } elseif (!empty($order['picking_ids'])) {
+                    // Order has deliveries — resolve the done pickings and push each one.
+                    // PushFulfillmentToEcomJob expects a stock.picking record, NOT a sale.order.
+                    // Calling it with a sale.order (which has no move_ids) silently produces empty fulfillments.
+                    $pickingIds  = $order['picking_ids'];
+                    $pickings    = $erp->getPickings($pickingIds);
+
+                    foreach ($pickings as $picking) {
+                        if (($picking['state'] ?? '') !== 'done') {
+                            continue; // skip in-progress or draft pickings
+                        }
+
+                        $picking['erp_order_id'] = (int) $orderId;
+
+                        // Skip if already dispatched
+                        $alreadyDone = \App\Models\SyncLog::where('entity_type', 'dispatch')
+                            ->where('entity_id', $orderId)
+                            ->where('status', \App\Models\SyncLog::STATUS_SUCCESS)
+                            ->exists();
+
+                        if ($alreadyDone) {
+                            Log::debug("FetchErpOrdersJob: order #{$orderId} already dispatched, skipping picking#{$picking['id']}");
+                            continue;
+                        }
+
+                        // Resolve Shopify order ID — PushFulfillmentToEcomJob requires _ecom_order_id
+                        $orderMapping = SyncMapping::whereIn('entity_type', ['order', 'sales_order'])
+                            ->where('erp_id', $orderId)
+                            ->first();
+
+                        if (!$orderMapping) {
+                            Log::debug("FetchErpOrdersJob: no ecom mapping for sale#{$orderId}, skipping fulfillment");
+                            continue;
+                        }
+
+                        $picking['_ecom_order_id'] = $orderMapping->ecom_id;
+
+                        PushFulfillmentToEcomJob::dispatch($picking);
+                        Log::info("FetchErpOrdersJob: queued fulfillment for order #{$orderId} via picking #{$picking['id']}");
                     }
                 }
 

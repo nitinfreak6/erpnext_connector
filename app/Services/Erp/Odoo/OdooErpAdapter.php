@@ -138,9 +138,22 @@ class OdooErpAdapter implements ErpInterface
         return $this->orders->getPickings($pickingIds);
     }
 
-    public function getMoves(array $moveIds): array
+    public function getMoves(array $moveIds, ?array $fields = null): array
     {
-        return $this->orders->getMoves($moveIds);
+        // If no explicit field list, derive from dispatch entity field configs.
+        // This replaces the hardcoded ['id','product_id','quantity_done',...] that
+        // broke on Odoo 17 and ignored user-configured fields entirely.
+        if ($fields === null) {
+            try {
+                $sync   = app(\App\Services\Sync\UniversalSyncService::class);
+                $fields = $sync->getErpFieldsToFetch('dispatch', 'line');
+            } catch (\Throwable) {
+                // Fallback if no dispatch line configs exist yet
+                $fields = ['id', 'product_id', 'product_uom_qty', 'quantity', 'state', 'name'];
+            }
+        }
+
+        return $this->orders->getMoves($moveIds, $fields);
     }
 
     public function createOrder(array $orderData): int

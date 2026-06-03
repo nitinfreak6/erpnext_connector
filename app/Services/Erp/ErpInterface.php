@@ -108,7 +108,7 @@ interface ErpInterface
     /**
      * Return stock move records by their IDs.
      */
-    public function getMoves(array $moveIds): array;
+    public function getMoves(array $moveIds, ?array $fields = null): array;
 
     /**
      * Create an order in the ERP from a normalized order array.

@@ -85,11 +85,10 @@ class OdooOrderService
     /**
      * Get stock moves for a picking.
      */
-    public function getMoves(array $moveIds): array
+    public function getMoves(array $moveIds, ?array $fields = null): array
     {
-        return $this->odoo->read('stock.move', $moveIds, [
-            'id', 'product_id', 'product_uom_qty', 'quantity_done', 'state',
-        ]);
+        $fields ??= ['id', 'product_id', 'product_uom_qty', 'quantity', 'state', 'name'];
+        return $this->odoo->read('stock.move', $moveIds, $fields);
     }
 
     /**

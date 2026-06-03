@@ -10,6 +10,7 @@ use App\Jobs\Ecom\PushFulfillmentToEcomJob;
 use App\Jobs\Ecom\PushOrderToEcomJob;
 use App\Jobs\Erp\FetchErpOrdersJob;
 use App\Models\SyncLog;
+use Illuminate\Support\Facades\Log;
 use App\Models\SyncMapping;
 use App\Models\SyncQueueState;
 use App\Services\Erp\ErpInterface;
@@ -56,10 +57,24 @@ class OrdersController extends Controller
                 ->latest()
                 ->first();
 
-            $mapping->dispatch_log = SyncLog::where('entity_type', 'dispatch')
+            // Find dispatch log by ecom_id, erp_id (sale order), or any linked picking IDs
+            $dispatchPickingIds = SyncMapping::where('entity_type', 'dispatch')
                 ->where(function ($q) use ($mapping) {
+                    $q->where('ecom_id', $mapping->ecom_id);
+                    if ($mapping->erp_id) {
+                        $q->orWhereRaw("JSON_EXTRACT(metadata, '$.erp_order_id') = ?", [$mapping->erp_id]);
+                    }
+                })
+                ->pluck('erp_id')
+                ->toArray();
+
+            $mapping->dispatch_log = SyncLog::where('entity_type', 'dispatch')
+                ->where(function ($q) use ($mapping, $dispatchPickingIds) {
                     $q->where('entity_id', $mapping->ecom_id)
-                      ->orWhere('entity_id', $mapping->erp_id);
+                      ->orWhere('entity_id', (string) $mapping->erp_id);
+                    if (!empty($dispatchPickingIds)) {
+                        $q->orWhereIn('entity_id', array_map('strval', $dispatchPickingIds));
+                    }
                 })
                 ->latest()
                 ->first();
@@ -130,11 +145,26 @@ class OrdersController extends Controller
             ->where('erp_id', (string) $erpId)
             ->first();
 
-        $logs = SyncLog::where('entity_type', 'dispatch')
+        // Also find logs by any dispatch SyncMapping erp_id (picking IDs) linked to this order.
+        // The job may log with picking ID (legacy) or sale order ID (current).
+        $pickingIds = SyncMapping::where('entity_type', 'dispatch')
             ->where(function ($q) use ($erpId, $mapping) {
+                $q->whereRaw("JSON_EXTRACT(metadata, '$.erp_order_id') = ?", [$erpId]);
+                if ($mapping?->ecom_id) {
+                    $q->orWhere('ecom_id', $mapping->ecom_id);
+                }
+            })
+            ->pluck('erp_id')
+            ->toArray();
+
+        $logs = SyncLog::where('entity_type', 'dispatch')
+            ->where(function ($q) use ($erpId, $mapping, $pickingIds) {
                 $q->where('entity_id', (string) $erpId);
                 if ($mapping?->ecom_id) {
                     $q->orWhere('entity_id', $mapping->ecom_id);
+                }
+                if (!empty($pickingIds)) {
+                    $q->orWhereIn('entity_id', array_map('strval', $pickingIds));
                 }
             })
             ->orderByDesc('created_at')
@@ -234,23 +264,59 @@ class OrdersController extends Controller
         }
 
         try {
-            // Use dispatch cursor for incremental fetching
+            // ── FETCH ONLY: pull fulfilled pickings from ERP and store locally.
+            // Does NOT push to Shopify. Use Post Dispatch for that.
             $state     = SyncQueueState::firstOrCreate(
                 ['sync_type' => 'dispatch'],
                 ['last_erp_write_date' => null]
             );
             $sinceDate = $state->last_erp_write_date;
 
-            $erp     = app(ErpInterface::class);
-            $orders  = $erp->getFulfilledOrders($sinceDate);
-            $pushed  = 0;
-            $latest  = null;
+            $erp      = app(ErpInterface::class);
+            $pickings = $erp->getFulfilledOrders($sinceDate);
+            $fetched  = 0;
+            $skipped  = 0;
+            $latest   = null;
 
-            foreach ($orders as $order) {
-                PushFulfillmentToEcomJob::dispatch($order);
-                $pushed++;
-                // Track latest date_done for cursor
-                $doneDt = $order['date_done'] ?? null;
+            foreach ($pickings as $picking) {
+                $saleOrderId = (string) (
+                    $picking['erp_order_id']
+                    ?? (is_array($picking['sale_id'] ?? null) ? $picking['sale_id'][0] : ($picking['sale_id'] ?? null))
+                );
+
+                if (!$saleOrderId) { $skipped++; continue; }
+
+                // Find the ecom order mapping to get the Shopify order ID
+                $orderMapping = SyncMapping::whereIn('entity_type', ['order', 'sales_order'])
+                    ->where('erp_id', $saleOrderId)
+                    ->first();
+
+                if (!$orderMapping) {
+                    Log::debug("fetchDispatch: no ecom mapping for sale#{$saleOrderId}, skipping picking#{$picking['id']}");
+                    $skipped++;
+                    continue;
+                }
+
+                // Store picking as a pending dispatch mapping — ready for Post Dispatch
+                SyncMapping::updateOrCreate(
+                    [
+                        'entity_type' => 'dispatch',
+                        'erp_id'      => (string) $picking['id'],   // picking ID
+                        'erp_driver'  => $this->settings->erpDriver(),
+                    ],
+                    [
+                        'ecom_id'              => $orderMapping->ecom_id,  // Shopify order ID
+                        'ecom_driver'          => $this->settings->ecomDriver(),
+                        'ecom_status'          => 'pending_dispatch',
+                        'last_sync_direction'  => 'erp_to_ecom',
+                        'metadata'             => $picking,   // full picking data for Post Dispatch
+                        'last_synced_at'       => now(),
+                    ]
+                );
+
+                $fetched++;
+
+                $doneDt = $picking['date_done'] ?? null;
                 if ($doneDt && (!$latest || $doneDt > $latest)) {
                     $latest = $doneDt;
                 }
@@ -260,13 +326,15 @@ class OrdersController extends Controller
                 $state->update(['last_erp_write_date' => $latest, 'last_poll_at' => now()]);
             }
 
-            if ($pushed === 0) {
+            if ($fetched === 0) {
                 return redirect()->route('dashboard.orders')
-                    ->with('info', 'No new dispatched orders in ' . $this->settings->erpDisplayName() . ' since last sync.');
+                    ->with('info', 'No new fulfilled orders found in ' . $this->settings->erpDisplayName() .
+                        ($skipped > 0 ? " ({$skipped} skipped — no ecom mapping)." : '.'));
             }
 
             return redirect()->route('dashboard.orders')
-                ->with('success', "{$pushed} dispatch(es) fetched from " . $this->settings->erpDisplayName() . ' and queued for ' . $this->settings->ecomDisplayName() . '.');
+                ->with('success', "{$fetched} dispatch(es) fetched from " . $this->settings->erpDisplayName() .
+                    '. Click Post Dispatch to push to ' . $this->settings->ecomDisplayName() . '.');
 
         } catch (\Throwable $e) {
             return redirect()->route('dashboard.orders')
@@ -274,7 +342,9 @@ class OrdersController extends Controller
         }
     }
 
-    // ── Post Dispatch: push all pending fulfillments to Ecom ──────────────
+    // ── Post Dispatch: push pending_dispatch mappings to Ecom ──────────────
+    // Reads locally stored dispatch mappings (set by Fetch Dispatch) and
+    // pushes each one to Shopify as a fulfillment. Independent of Odoo.
 
     public function postDispatch(Request $request)
     {
@@ -286,23 +356,56 @@ class OrdersController extends Controller
         }
 
         try {
-            // Post dispatch pushes ALL fulfilled orders (full push, not incremental)
-            $erp    = app(ErpInterface::class);
-            $orders = $erp->getFulfilledOrders();
-            $pushed = 0;
+            $pending = SyncMapping::where('entity_type', 'dispatch')
+                ->where('ecom_status', 'pending_dispatch')
+                ->whereNotNull('metadata')
+                ->get();
 
-            foreach ($orders as $order) {
-                PushFulfillmentToEcomJob::dispatch($order);
-                $pushed++;
-            }
-
-            if ($pushed === 0) {
+            if ($pending->isEmpty()) {
                 return redirect()->route('dashboard.orders')
-                    ->with('info', 'No dispatched orders found to push.');
+                    ->with('info', 'No pending dispatches. Run Fetch Dispatch first.');
             }
+
+            $pushed  = 0;
+            $failed  = 0;
+
+            foreach ($pending as $mapping) {
+                // metadata cast='array' on SyncMapping — Eloquent decodes it automatically.
+                // Guard both cases in case of legacy double-encoded rows.
+                $picking = is_array($mapping->metadata)
+                    ? $mapping->metadata
+                    : json_decode($mapping->metadata, true);
+
+                // If still a string after decode, it was double-encoded
+                if (is_string($picking)) {
+                    $picking = json_decode($picking, true);
+                }
+
+                if (empty($picking) || !is_array($picking)) {
+                    Log::warning("postDispatch: invalid metadata for dispatch mapping#{$mapping->id}, skipping.");
+                    $failed++;
+                    continue;
+                }
+
+                // Inject erp_order_id and ecom order ID for PushFulfillmentToEcomJob
+                $picking['erp_order_id'] = $picking['erp_order_id'] ?? null;
+                $picking['_ecom_order_id'] = $mapping->ecom_id;
+
+                try {
+                    PushFulfillmentToEcomJob::dispatchSync($picking);
+                    $mapping->update(['ecom_status' => 'dispatched', 'last_synced_at' => now()]);
+                    $pushed++;
+                } catch (\Throwable $e) {
+                    Log::error("postDispatch: failed for picking#{$mapping->erp_id}: " . $e->getMessage());
+                    $failed++;
+                }
+            }
+
+            $msg = "{$pushed} fulfillment(s) pushed to " . $this->settings->ecomDisplayName() . ".";
+            if ($failed > 0) $msg .= " {$failed} failed — check logs.";
 
             return redirect()->route('dashboard.orders')
-                ->with('success', "{$pushed} fulfillment(s) queued for " . $this->settings->ecomDisplayName() . '.');
+                ->with($failed > 0 ? 'warning' : 'success', $msg);
 
         } catch (\Throwable $e) {
             return redirect()->route('dashboard.orders')

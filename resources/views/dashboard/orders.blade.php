@@ -274,10 +274,6 @@
     <div class="px-5 py-3 border-t border-gray-100">{{ $orders->links() }}</div>
 </div>
 
-{{-- Recent Logs --}}
-<div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-    <h3 class="text-sm font-semibold text-gray-700 mb-3">Recent Order Sync Activity</h3>
-    @include('dashboard._log-rows', ['logs' => $recentLogs])
-</div>
+
 
 @endsection

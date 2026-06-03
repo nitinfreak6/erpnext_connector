@@ -20,7 +20,13 @@ class ShopifyFulfillmentService
         $fulfillmentOrderIds = $this->getFulfillmentOrderIds($orderId);
 
         if (empty($fulfillmentOrderIds)) {
-            throw new \RuntimeException("No open fulfillment orders found for Shopify order #{$orderId}");
+            // Order is already fulfilled or fulfillment orders are closed in Shopify.
+            // This is not an error — log and return a sentinel so callers can
+            // mark the dispatch as skipped rather than failed.
+            \Illuminate\Support\Facades\Log::info(
+                "ShopifyFulfillmentService: order #{$orderId} has no open fulfillment orders — already fulfilled or closed."
+            );
+            return ['id' => null, 'status' => 'already_fulfilled', 'skipped' => true];
         }
 
         $input = $this->buildGraphQLInput($orderId, $fulfillmentData, $fulfillmentOrderIds);
@@ -107,7 +113,7 @@ class ShopifyFulfillmentService
                 if (isset($lineItem['_odoo_product_id']) && $lineItem['_odoo_product_id'] == $productOdooId) {
                     $lineItems[] = [
                         'id'       => $lineItem['id'],
-                        'quantity' => (int) $move['quantity_done'],
+                        'quantity' => (int) ($move['quantity'] ?? $move['quantity_done'] ?? 0),
                     ];
                     break;
                 }
@@ -198,11 +204,17 @@ class ShopifyFulfillmentService
         }
 
         foreach ($payload['line_items'] ?? [] as $item) {
-            $foLineItemId = $lineItemIdMap[(string)$item['id']] ?? null;
+            // line_items from dispatch payload may only have quantity/sku (no Shopify ID).
+            // If no id present, skip — $requestedLineItems stays empty which tells
+            // Shopify to fulfill ALL open line items on this fulfillment order.
+            if (empty($item['id'])) {
+                continue;
+            }
+            $foLineItemId = $lineItemIdMap[(string) $item['id']] ?? null;
             if ($foLineItemId) {
                 $requestedLineItems[] = [
                     'fulfillmentOrderLineItemId' => $foLineItemId,
-                    'quantity'                   => $item['quantity'],
+                    'quantity'                   => $item['quantity'] ?? 1,
                 ];
             }
         }

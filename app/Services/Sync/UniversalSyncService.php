@@ -78,6 +78,14 @@ class UniversalSyncService
         $ecomPayload = $this->buildEcomPayload($erpData, $fieldConfigs);
         $erpId       = (string) ($erpData['id'] ?? '');
 
+        // Carry through any injected meta-keys (prefixed _) that adapters need
+        // but that don't correspond to field configs (e.g. _ecom_order_id for dispatch).
+        foreach ($erpData as $key => $val) {
+            if (str_starts_with($key, '_')) {
+                $ecomPayload[$key] = $val;
+            }
+        }
+
         $mapping = SyncMapping::where('entity_type', $entityType)
             ->where('erp_id', $erpId)
             ->where('erp_driver', $this->erp->driverName())
@@ -180,6 +188,31 @@ class UniversalSyncService
     public function buildErpPayloadOnly(string $entityType, array $ecomData, string $scope = 'header'): array
     {
         return $this->buildErpPayloadFull($entityType, $ecomData, $scope);
+    }
+
+    // ── Public helper: ERP fields needed to satisfy configs for an entity ──
+    // Use this to build the field list for ERP API calls (e.g. stock.move read)
+    // instead of hardcoding field names in adapters.
+    public function getErpFieldsToFetch(string $entityType, ?string $scope = null): array
+    {
+        $configs = $this->getFieldConfigs($entityType, $scope);
+
+        $fields = $configs
+            ->flatMap(fn($c) => array_filter([
+                $c->erp_field   ? explode('.', $c->erp_field)[0]   : null,
+                $c->erp_field_2 ? explode('.', $c->erp_field_2)[0] : null,
+            ]))
+            ->unique()
+            ->filter()
+            ->values()
+            ->toArray();
+
+        // Always include id — needed for mapping lookups
+        if (!in_array('id', $fields)) {
+            array_unshift($fields, 'id');
+        }
+
+        return $fields;
     }
 
     // ── Field config loader ───────────────────────────────────────────────
@@ -369,6 +402,17 @@ class UniversalSyncService
 
     private function createInEcom(string $entityType, array $payload): array
     {
+        if ($entityType === 'dispatch') {
+            // createFulfillment needs the ecom order ID as a separate argument.
+            // PushFulfillmentToEcomJob injects it as _ecom_order_id in the payload.
+            $ecomOrderId = (string) ($payload['_ecom_order_id'] ?? '');
+            if (!$ecomOrderId) {
+                throw new \RuntimeException('dispatch createInEcom: _ecom_order_id not set in payload');
+            }
+            unset($payload['_ecom_order_id']);
+            return $this->ecom->createFulfillment($ecomOrderId, $payload);
+        }
+
         return match ($entityType) {
             'customer'    => $this->ecom->createCustomer($payload),
             'sales_order' => $this->ecom->createOrder($payload),
