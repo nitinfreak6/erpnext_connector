@@ -87,6 +87,119 @@ class ShopifyOrderService
     /**
      * Get a single order by numeric ID.
      */
+    /**
+     * Create an order in Shopify via draftOrderCreate + draftOrderComplete.
+     * Converts Odoo order structure to Shopify DraftOrderInput.
+     */
+    public function create(array $orderData): array
+    {
+        $input = $this->buildDraftOrderInput($orderData);
+
+        $mutation = <<<'GQL'
+        mutation draftOrderCreate($input: DraftOrderInput!) {
+            draftOrderCreate(input: $input) {
+                draftOrder {
+                    id
+                    order { id name }
+                }
+                userErrors { field message }
+            }
+        }
+        GQL;
+
+        $data   = $this->graphql->query($mutation, ['input' => $input]);
+        $errors = $this->graphql->extractUserErrors($data, 'draftOrderCreate');
+
+        if (!empty($errors)) {
+            throw new \RuntimeException('Shopify draftOrderCreate errors: ' . implode('; ', $errors));
+        }
+
+        $draftOrder = $data['draftOrderCreate']['draftOrder'];
+        $draftId    = $draftOrder['id'];
+
+        // Complete the draft order immediately to create a real order
+        $completeMutation = <<<'GQL'
+        mutation draftOrderComplete($id: ID!) {
+            draftOrderComplete(id: $id) {
+                draftOrder {
+                    order { id name }
+                }
+                userErrors { field message }
+            }
+        }
+        GQL;
+
+        $completeData   = $this->graphql->query($completeMutation, ['id' => $draftId]);
+        $completeErrors = $this->graphql->extractUserErrors($completeData, 'draftOrderComplete');
+
+        if (!empty($completeErrors)) {
+            throw new \RuntimeException('Shopify draftOrderComplete errors: ' . implode('; ', $completeErrors));
+        }
+
+        $order = $completeData['draftOrderComplete']['draftOrder']['order'];
+        return ['id' => $this->fromGid($order['id']), 'name' => $order['name']];
+    }
+
+    /**
+     * Build Shopify DraftOrderInput from Odoo order structure.
+     */
+    private function buildDraftOrderInput(array $order): array
+    {
+        $input = [];
+
+        // Note / reference
+        if (!empty($order['name'])) {
+            $input['note'] = 'ERP Order: ' . $order['name'];
+        }
+        if (!empty($order['client_order_ref'])) {
+            $input['poNumber'] = (string) $order['client_order_ref'];
+        }
+
+        // Customer — resolve by email if available
+        if (!empty($order['partner_id'])) {
+            $email = is_array($order['partner_id']) ? ($order['partner_id'][1] ?? null) : null;
+            if ($email && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $input['email'] = $email;
+            }
+        }
+
+        // Line items from enriched order_line data
+        $lineItems = [];
+        foreach ($order['order_line'] ?? [] as $line) {
+            if (!is_array($line)) continue;
+
+            $qty      = (float) ($line['product_uom_qty'] ?? 1);
+            $price    = (float) ($line['price_unit'] ?? 0);
+            $title    = $line['name'] ?? 'Product';
+            $sku      = null;
+
+            // product_id = [id, "name"] from Odoo
+            if (is_array($line['product_id'] ?? null)) {
+                $sku = $line['product_id'][1] ?? null;
+            }
+
+            $item = [
+                'title'    => $title,
+                'quantity' => (int) max(1, $qty),
+                'originalUnitPrice' => number_format($price, 2, '.', ''),
+            ];
+
+            if ($sku) {
+                $item['sku'] = $sku;
+            }
+
+            $lineItems[] = $item;
+        }
+
+        if (empty($lineItems)) {
+            throw new \RuntimeException('Shopify draftOrderCreate: no line items found in order. Ensure order lines are enriched before calling create().');
+        }
+
+        $input['lineItems'] = $lineItems;
+
+        return $input;
+    }
+
     public function get(string $orderId): ?array
     {
         $query = $this->orderFragment() . <<<'GQL'

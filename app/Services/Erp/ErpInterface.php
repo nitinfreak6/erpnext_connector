@@ -141,6 +141,8 @@ interface ErpInterface
     /**
      * Create a customer in the ERP. Returns the new ERP ID.
      */
+    public function createProduct(array $data): int;
+
     public function createCustomer(array $data): int;
 
     /**

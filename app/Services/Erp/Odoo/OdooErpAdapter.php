@@ -39,14 +39,7 @@ class OdooErpAdapter implements ErpInterface
 
     public function getProductById(int $erpId): ?array
     {
-        // OdooProductService doesn't have a single-read method yet;
-        // use getAllActive with a domain offset trick is wasteful — instead
-        // we call searchRead directly through the underlying OdooService.
-        // If you later add OdooProductService::getById(), call it here.
-        $results = $this->products->getAllActive(0, 1);
-        // Fallback: fetch via searchRead on product.template
-        // This works fine; keep it simple unless you add getById() to the service.
-        return $results[0] ?? null;
+        return $this->products->getById($erpId);
     }
 
     public function getVariantsForProducts(array $productIds): array
@@ -192,8 +185,11 @@ class OdooErpAdapter implements ErpInterface
         }
 
         // Sales Order Type
-        $orderTypeId = $channelMappings->resolveReverse('sales_order_type', $ecomDriver, $ecomDriver);
-        if ($orderTypeId) $payload['type_id'] = (int) $orderTypeId;
+        // type_id (sale.order.type) — only available if sale_order_type module is installed.
+        // Removed from payload for Odoo 17+ compatibility; the module was split/renamed.
+        // Re-enable by adding type_id mapping via ChannelMapping if your Odoo has the module.
+        // $orderTypeId = $channelMappings->resolveReverse('sales_order_type', $ecomDriver, $ecomDriver);
+        // if ($orderTypeId) $payload['type_id'] = (int) $orderTypeId;
 
         // Sales Rep / Salesperson
         $salesRepId = $channelMappings->resolveReverse('sales_rep', $ecomDriver, $ecomDriver);
@@ -349,6 +345,52 @@ class OdooErpAdapter implements ErpInterface
         return $this->customers->findByEmail($email);
     }
 
+    /**
+     * Create a product.template in Odoo from ecom product data.
+     * Maps Shopify normalized product fields → Odoo product.template.
+     */
+    public function createProduct(array $data): int
+    {
+        $odoo = app(\App\Services\Odoo\OdooService::class);
+
+        // Build minimal product.template payload from Shopify data
+        $payload = [
+            'name'          => $data['name'] ?? $data['title'] ?? ('Shopify Product #' . ($data['id'] ?? '')),
+            'sale_ok'       => true,
+            'purchase_ok'   => true,
+            'active'        => true,
+            'type'          => 'consu',   // consumable — change to 'product' if tracked inventory needed
+        ];
+
+        // Map optional fields
+        if (!empty($data['description'] ?? $data['body_html'] ?? null)) {
+            $payload['description_sale'] = strip_tags($data['description'] ?? $data['body_html']);
+        }
+
+        if (!empty($data['vendor'])) {
+            $payload['description_picking'] = $data['vendor'];
+        }
+
+        // Set list price from first variant price if available
+        if (!empty($data['variants'][0]['price'])) {
+            $payload['list_price'] = (float) $data['variants'][0]['price'];
+        }
+
+        // Set internal reference from first variant SKU
+        if (!empty($data['variants'][0]['sku'])) {
+            $payload['default_code'] = $data['variants'][0]['sku'];
+        }
+
+        $productId = $odoo->create('product.template', $payload);
+
+        \Illuminate\Support\Facades\Log::info("OdooErpAdapter::createProduct: created product.template #{$productId} from ecom", [
+            'name'  => $payload['name'],
+            'sku'   => $payload['default_code'] ?? null,
+        ]);
+
+        return (int) $productId;
+    }
+
     public function createCustomer(array $data): int
     {
         return $this->customers->create($data);
@@ -495,7 +537,7 @@ class OdooErpAdapter implements ErpInterface
         ];
 
         if ($sinceDate) {
-            $domain[] = ['date_done', '>=', $sinceDate];
+            $domain[] = ['date_done', '>', $sinceDate];   // strict > avoids re-fetching last cursor record
         }
 
         $pickings = $odoo->searchRead('stock.picking', $domain, [

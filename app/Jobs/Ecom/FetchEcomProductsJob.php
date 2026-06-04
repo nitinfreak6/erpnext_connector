@@ -87,29 +87,67 @@ class FetchEcomProductsJob implements ShouldQueue, ShouldBeUnique
 
             Log::info("FetchEcomProductsJob [{$driver}]: found {$total} products.");
 
-            $synced = 0;
-            $failed = 0;
+            $stored  = 0;
+            $skipped = 0;
 
             foreach ($products as $ecomProduct) {
-                try {
-                    $syncService->syncEcomProductToErp($ecomProduct);
-                    $synced++;
-                } catch (\Throwable $e) {
-                    Log::error("FetchEcomProductsJob [{$driver}]: failed for product " . ($ecomProduct['id'] ?? '?') . ': ' . $e->getMessage());
-                    $failed++;
+                $ecomId        = (string) ($ecomProduct['id'] ?? '');
+                $updatedAt     = $ecomProduct['updated_at'] ?? null;
+                if (!$ecomId) continue;
+
+                // Skip if already pushed to ERP and unchanged
+                $existing = \App\Models\SyncMapping::where('entity_type', 'product')
+                    ->where('ecom_id', $ecomId)
+                    ->first();
+
+                if ($existing) {
+                    // Already in Odoo (erp_id set) and not changed
+                    if ($existing->erp_id && $existing->erp_id !== '0') {
+                        $prevMeta      = is_array($existing->metadata) ? $existing->metadata : json_decode($existing->metadata ?? '{}', true);
+                        $prevUpdatedAt = $prevMeta['updated_at'] ?? null;
+                        if ($prevUpdatedAt && $updatedAt && $prevUpdatedAt === $updatedAt) {
+                            $skipped++;
+                            continue;
+                        }
+                    }
+                    // Already pending and unchanged
+                    if ($existing->ecom_status === 'pending') {
+                        $prevMeta      = is_array($existing->metadata) ? $existing->metadata : json_decode($existing->metadata ?? '{}', true);
+                        $prevUpdatedAt = $prevMeta['updated_at'] ?? null;
+                        if ($prevUpdatedAt && $updatedAt && $prevUpdatedAt === $updatedAt) {
+                            $skipped++;
+                            continue;
+                        }
+                    }
                 }
+
+                // Store as pending — Post button will push to Odoo
+                \App\Models\SyncMapping::updateOrCreate(
+                    ['entity_type' => 'product', 'ecom_id' => $ecomId, 'ecom_driver' => $driver],
+                    [
+                        'ecom_handle'         => $ecomProduct['handle'] ?? null,
+                        'last_sync_direction' => 'ecom_to_erp',
+                        'ecom_status'         => 'pending',
+                        'metadata'            => $ecomProduct,
+                        'last_synced_at'      => now(),
+                    ]
+                );
+                $stored++;
             }
 
-            // Advance cursor — next run only fetches changes after this moment
+            $notes = $stored === 0 ? 'nothing_changed' : "fetched:{$stored}";
+            if ($skipped > 0) $notes .= ":skipped:{$skipped}";
+
+            // Advance cursor
             $state->update([
                 'is_running'           => false,
                 'last_poll_at'         => now(),
                 'last_ecom_write_date' => now()->toIso8601String(),
                 'run_started_at'       => null,
-                'notes'                => "Synced: {$synced}, Failed: {$failed}",
+                'notes'                => $notes,
             ]);
 
-            Log::info("FetchEcomProductsJob [{$driver}]: done. Synced: {$synced}, Failed: {$failed}");
+            Log::info("FetchEcomProductsJob [{$driver}]: stored={$stored} skipped={$skipped}");
 
         } catch (\Throwable $e) {
             $state->update(['is_running' => false, 'notes' => $e->getMessage()]);

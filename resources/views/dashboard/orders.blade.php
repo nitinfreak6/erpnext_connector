@@ -56,53 +56,71 @@
     @endforeach
 </div>
 
-{{-- 4 Action Buttons --}}
+{{-- Action Buttons --}}
 <div class="flex flex-wrap gap-2 mb-4">
-    {{-- Fetch Sales (Ecom → ERP) --}}
-    @if($syncMode === 'ecom_to_erp' || $syncMode === 'bidirectional')
-    <form method="POST" action="{{ route('dashboard.orders.pull') }}">
-        @csrf
-        <button type="submit" class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-            Fetch Sales
-        </button>
-    </form>
-    @endif
 
+    {{-- GROUP 1: Order sync — direction-aware --}}
+    <div class="flex gap-2 items-center">
+        <span class="text-xs text-gray-400 font-medium uppercase tracking-wide mr-1">Orders</span>
 
+        @if($syncMode === 'ecom_to_erp' || $syncMode === 'bidirectional')
+        {{-- Shopify → Odoo --}}
+        <form method="POST" action="{{ route('dashboard.orders.pull') }}">
+            @csrf
+            <button type="submit" class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                Fetch from {{ $ecomDisplayName }}
+            </button>
+        </form>
+        <form method="POST" action="{{ route('dashboard.orders.post-sales') }}">
+            @csrf
+            <button type="submit" class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l4 4m0 0l4-4m-4 4V4"/></svg>
+                Post to {{ $erpDisplayName }}
+            </button>
+        </form>
+        @endif
 
-    {{-- Post Sales: post fetched orders to ERP --}}
-    @if($syncMode === 'ecom_to_erp' || $syncMode === 'bidirectional')
-    <form method="POST" action="{{ route('dashboard.orders.post-sales') }}">
-        @csrf
-        <button type="submit" class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l4 4m0 0l4-4m-4 4V4"/></svg>
-            Post Sales
-        </button>
-    </form>
-    @endif
+        @if($syncMode === 'erp_to_ecom' || $syncMode === 'bidirectional')
+        {{-- Odoo → Shopify --}}
+        <form method="POST" action="{{ route('dashboard.orders.fetch') }}">
+            @csrf
+            <button type="submit" class="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                Fetch from {{ $erpDisplayName }}
+            </button>
+        </form>
+        <form method="POST" action="{{ route('dashboard.orders.post-sales') }}">
+            @csrf
+            <button type="submit" class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l4 4m0 0l4-4m-4 4V4"/></svg>
+                Post to {{ $ecomDisplayName }}
+            </button>
+        </form>
+        @endif
+    </div>
 
-    {{-- Fetch Dispatch (ERP fulfilled orders → push to Ecom) --}}
-    @if($syncMode === 'erp_to_ecom' || $syncMode === 'bidirectional')
-    <form method="POST" action="{{ route('dashboard.orders.fetch-dispatch') }}">
-        @csrf
-        <button type="submit" class="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
-            Fetch Dispatch
-        </button>
-    </form>
-    @endif
+    <div class="w-px bg-gray-200 self-stretch mx-1"></div>
 
-    {{-- Post Dispatch (push fulfillments to Ecom) --}}
-    @if($syncMode === 'erp_to_ecom' || $syncMode === 'bidirectional')
-    <form method="POST" action="{{ route('dashboard.orders.post-dispatch') }}">
-        @csrf
-        <button type="submit" class="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
-            Post Dispatch
-        </button>
-    </form>
-    @endif
+    {{-- GROUP 2: Dispatch — always Odoo → Shopify regardless of order sync mode --}}
+    <div class="flex gap-2 items-center">
+        <span class="text-xs text-gray-400 font-medium uppercase tracking-wide mr-1">Dispatch</span>
+        <form method="POST" action="{{ route('dashboard.orders.fetch-dispatch') }}">
+            @csrf
+            <button type="submit" class="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+                Fetch Dispatch
+            </button>
+        </form>
+        <form method="POST" action="{{ route('dashboard.orders.post-dispatch') }}">
+            @csrf
+            <button type="submit" class="inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+                Post Dispatch
+            </button>
+        </form>
+    </div>
+
 </div>
 
 {{-- Filters --}}
@@ -179,7 +197,7 @@
                         {{ $mapping->ecom_handle ?? '—' }}
                     </td>
 
-                    {{-- Order sync status --}}
+                    {{-- Sync status --}}
                     <td class="px-4 py-3">
                         @if($mapping->latest_log)
                             @php $s = $mapping->latest_log->status; $c = ['success'=>'emerald','failed'=>'red','processing'=>'blue','pending'=>'amber'][$s] ?? 'gray'; @endphp
@@ -188,22 +206,20 @@
                             <span class="badge bg-gray-100 text-gray-500 text-xs">Synced</span>
                         @endif
                     </td>
-					
-					{{-- Order status --}}
+
+                    {{-- Order status --}}
                     <td class="px-4 py-3">
-					@php
-						$statuses = [
-							'pending' => ['label' => 'Pending', 'color' => 'amber'],
-							'posted'  => ['label' => 'Sent', 'color' => 'emerald'],
-						];
-
-						$status = $statuses[$mapping->ecom_status] ?? ['label' => 'Unknown', 'color' => 'gray'];
-					@endphp
-
-					<span class="badge bg-{{ $status['color'] }}-100 text-{{ $status['color'] }}-700 text-xs">
-						{{ $status['label'] }}
-					</span>
-				</td>
+                        @php
+                            $statuses = [
+                                'pending' => ['label' => 'Pending', 'color' => 'amber'],
+                                'posted'  => ['label' => 'Sent',    'color' => 'emerald'],
+                            ];
+                            $status = $statuses[$mapping->ecom_status] ?? ['label' => 'Unknown', 'color' => 'gray'];
+                        @endphp
+                        <span class="badge bg-{{ $status['color'] }}-100 text-{{ $status['color'] }}-700 text-xs">
+                            {{ $status['label'] }}
+                        </span>
+                    </td>
 
                     {{-- Dispatch status --}}
                     <td class="px-4 py-3">
@@ -219,7 +235,7 @@
                         {{ $mapping->last_synced_at?->diffForHumans() ?? 'Never' }}
                     </td>
 
-                    {{-- Tools only --}}
+                    {{-- Tools dropdown --}}
                     <td class="px-4 py-3 text-right">
                         <div class="relative inline-block" x-data="{ open: false }">
                             <button @click="open = !open"
@@ -227,19 +243,21 @@
                                 Tools
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                             </button>
-                            <div x-show="open" @click.away="open = false" x-cloak
-                                 class="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-100 z-20 py-1">
 
-                                {{-- Sales Info --}}
+                            <div x-show="open" @click.away="open = false" x-cloak
+                                 class="absolute right-0 mt-1 w-52 bg-white rounded-lg shadow-lg border border-gray-100 z-20 py-1">
+
+                                {{-- Sales Info — always visible, uses ecom_id or erp_id --}}
                                 @if($mapping->erp_id)
                                 <a href="{{ route('dashboard.orders.sales-info', $mapping->erp_id) }}"
                                    class="flex items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">
                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                                     Sales Info
                                 </a>
+                                
                                 @endif
 
-                                {{-- Dispatch Info --}}
+                                {{-- Dispatch Info — only once order is in Odoo --}}
                                 @if($mapping->erp_id)
                                 <a href="{{ route('dashboard.orders.dispatch-info', $mapping->erp_id) }}"
                                    class="flex items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-purple-50 hover:text-purple-700">
@@ -247,23 +265,64 @@
                                     Dispatch Info
                                 </a>
                                 @endif
-
                                 <div class="border-t border-gray-100 my-1"></div>
-								<form method="POST" action="{{ route('dashboard.orders.post-single', $mapping->ecom_id) }}">
+
+                                {{-- Post Sale --}}
+                                {{-- ecom_to_erp: push Shopify order → Odoo (show when pending or not yet in Odoo) --}}
+                                @if(($syncMode === 'ecom_to_erp' || $syncMode === 'bidirectional') && $mapping->ecom_id && !$mapping->erp_id)
+                                <form method="POST" action="{{ route('dashboard.orders.post-single', $mapping->ecom_id) }}">
                                     @csrf
                                     <button type="submit" class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-emerald-50 hover:text-emerald-700">
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l4 4m0 0l4-4m-4 4V4"/></svg>
-                                        Post Sale
+                                        Post to {{ $erpDisplayName }}
                                     </button>
                                 </form>
-                               
-							</div>
+                                @endif
+
+                                {{-- erp_to_ecom: push Odoo order → Shopify --}}
+                                @if(($syncMode === 'erp_to_ecom' || $syncMode === 'bidirectional') && $mapping->erp_id && !$mapping->ecom_id)
+                                <form method="POST" action="{{ route('dashboard.orders.push', $mapping->erp_id) }}">
+                                    @csrf
+                                    <button type="submit" class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-emerald-50 hover:text-emerald-700">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l4 4m0 0l4-4m-4 4V4"/></svg>
+                                        Post to {{ $ecomDisplayName }}
+                                    </button>
+                                </form>
+                                @endif
+
+                                {{-- Dispatch section — always Odoo → Shopify --}}
+                                @if($mapping->erp_id)
+                                <div class="border-t border-gray-100 my-1"></div>
+                                <form method="POST" action="{{ route('dashboard.orders.fetch-dispatch-single', $mapping->erp_id) }}">
+                                    @csrf
+                                    <button type="submit" class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-purple-50 hover:text-purple-700">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+                                        Fetch Dispatch
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ route('dashboard.orders.post-dispatch-single', $mapping->erp_id) }}">
+                                    @csrf
+                                    <button type="submit" class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-teal-50 hover:text-teal-700">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+                                        Post Dispatch
+                                    </button>
+                                </form>
+                                @else
+                                {{-- Order not in Odoo yet — Dispatch not available --}}
+                                <div class="border-t border-gray-100 my-1"></div>
+                                <div class="flex items-center gap-2 px-3 py-2 text-xs text-amber-500">
+                                    <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                    Post to {{ $erpDisplayName }} first
+                                </div>
+                                @endif
+
+                            </div>
                         </div>
                     </td>
                 </tr>
                 @empty
                 <tr>
-                    <td colspan="8" class="px-4 py-12 text-center text-gray-400">
+                    <td colspan="9" class="px-4 py-12 text-center text-gray-400">
                         No order mappings yet. Use <strong>Fetch Sales</strong> or <strong>Post Sales</strong> to sync orders.
                     </td>
                 </tr>

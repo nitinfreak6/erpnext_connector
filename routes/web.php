@@ -14,6 +14,7 @@ use App\Http\Controllers\Dashboard\MappingController;
 use App\Http\Controllers\Dashboard\ProductCacheController;
 use App\Http\Controllers\Dashboard\ProductFieldConfigController;
 use App\Http\Controllers\Dashboard\CustomersController;
+use App\Http\Controllers\Dashboard\AlertsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -47,6 +48,8 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
         Route::post('/pull',            [ProductsController::class, 'pull'])       ->name('.pull');
         Route::post('/post-all',        [ProductsController::class, 'postAll'])    ->name('.post-all');
         Route::post('/{odooId}/fetch',  [ProductsController::class, 'fetchSingle'])->name('.fetch-single');
+		Route::post('/{ecomId}/pull-single', [ProductsController::class, 'pullSingle'])      ->name('.pull-single');
+        Route::post('/{ecomId}/push-to-erp', [ProductsController::class, 'pushSingleToErp']) ->name('.push-single-to-erp');
         Route::post('/{odooId}/post',   [ProductsController::class, 'postSingle']) ->name('.post-single');
         Route::patch('/{odooId}/refresh',[ProductsController::class, 'refresh'])   ->name('.refresh');
     });
@@ -66,6 +69,8 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
             Route::get('/{erpId}',               [OrdersController::class, 'show'])          ->name('.show');
             Route::post('/{erpId}/push',         [OrdersController::class, 'push'])          ->name('.push');
             Route::post('/{ecomId}/sync-back',   [OrdersController::class, 'syncBack'])      ->name('.sync-back');
+			Route::post('/{erpId}/fetch-dispatch',    [OrdersController::class, 'fetchDispatchSingle']) ->name('.fetch-dispatch-single');
+            Route::post('/{erpId}/post-dispatch',     [OrdersController::class, 'postDispatchSingle'])  ->name('.post-dispatch-single');
         });
     });
 
@@ -151,6 +156,17 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
         Route::post('/{type}/import',            [MappingController::class, 'import']) ->name('.import');
 		Route::post('/{type}/fetch-erp-fields',  [MappingController::class, 'fetchErpFields']) ->name('.fetch-erp-fields');
 		Route::post('/{type}/fetch-ecom-fields', [MappingController::class, 'fetchEcomFields'])->name('.fetch-ecom-fields');
+    });
+	
+	 // ── Alerts & Notifications ────────────────────────────────────────────
+    Route::prefix('alerts')->name('.alerts')->middleware('role:manage-settings')->group(function () {
+        Route::get('/',              [AlertsController::class, 'index'])  ->name('.index');
+        Route::get('/create',        [AlertsController::class, 'create']) ->name('.create');
+        Route::post('/',             [AlertsController::class, 'store'])  ->name('.store');
+        Route::get('/{alert}/edit',  [AlertsController::class, 'edit'])   ->name('.edit');
+        Route::put('/{alert}',       [AlertsController::class, 'update']) ->name('.update');
+        Route::patch('/{alert}/toggle', [AlertsController::class, 'toggle'])->name('.toggle');
+        Route::delete('/',           [AlertsController::class, 'destroy'])->name('.destroy');
     });
 
 });

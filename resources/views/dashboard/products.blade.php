@@ -155,14 +155,32 @@
 </div>
 
 {{-- ── Action Buttons ── --}}
+{{-- ecom_to_erp: Fetch from Shopify + Push to Odoo --}}
+{{-- erp_to_ecom: Fetch from Odoo   + Push to Shopify --}}
+{{-- bidirectional: all buttons --}}
 <div class="flex flex-wrap items-center justify-end gap-3 mb-5">
 
-    {{-- Fetch from ERP --}}
+    @if($syncMode === 'ecom_to_erp' || $syncMode === 'bidirectional')
+    {{-- Fetch from Ecom (Shopify → local) --}}
+    <form method="POST" action="{{ route('dashboard.products.pull') }}">
+        @csrf
+        <button type="submit"
+                onclick="return confirm('Fetch ALL products from {{ $ecomDisplayName }}?')"
+                class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+            </svg>
+            Fetch from {{ $ecomDisplayName }}
+        </button>
+    </form>
+    @endif
+
     @if($syncMode === 'erp_to_ecom' || $syncMode === 'bidirectional')
+    {{-- Fetch from ERP (Odoo → local cache) --}}
     <form method="POST" action="{{ route('dashboard.products.fetch') }}">
         @csrf
         <button type="submit"
-                onclick="return confirm('Fetch ALL products from {{ $erpDisplayName }} now?')"
+                onclick="return confirm('Fetch ALL products from {{ $erpDisplayName }}?')"
                 class="inline-flex items-center gap-1.5 bg-indigo-700 hover:bg-indigo-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
@@ -172,27 +190,27 @@
     </form>
     @endif
 
-    {{-- Pull from Ecom --}}
     @if($syncMode === 'ecom_to_erp' || $syncMode === 'bidirectional')
-    <form method="POST" action="{{ route('dashboard.products.pull') }}">
+    {{-- Push to ERP (local → Odoo) --}}
+    <form method="POST" action="{{ route('dashboard.products.post-all') }}">
         @csrf
         <button type="submit"
-                onclick="return confirm('Pull ALL products from {{ ucfirst($ecomDriver) }} now?')"
-                class="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">
+                onclick="return confirm('Push ALL products to {{ $erpDisplayName }}?')"
+                class="inline-flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4 4m0 0l4-4m-4 4V4"/>
             </svg>
-            Pull from {{ ucfirst($ecomDriver) }}
+            Push to {{ $erpDisplayName }}
         </button>
     </form>
     @endif
 
-    {{-- Push to Ecom --}}
     @if($syncMode === 'erp_to_ecom' || $syncMode === 'bidirectional')
+    {{-- Push to Ecom (local cache → Shopify) --}}
     <form method="POST" action="{{ route('dashboard.products.post-all') }}">
         @csrf
         <button type="submit"
-                onclick="return confirm('Push ALL products to {{ ucfirst($ecomDriver) }}?')"
+                onclick="return confirm('Push ALL products to {{ $ecomDisplayName }}?')"
                 class="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4 4m0 0l4-4m-4 4V4"/>
@@ -201,7 +219,7 @@
         </button>
     </form>
     @endif
-    
+
 </div>
 
 {{-- ── Products Table ── --}}
@@ -219,9 +237,10 @@
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Last Synced</th>
                     @else
-                        {{-- Ecom → ERP columns --}}
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{{ ucfirst($ecomDriver) }} ID</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Handle</th>
+                        {{-- Ecom → ERP columns (same layout as ERP → Ecom) --}}
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{{ $ecomDisplayName }} ID</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Product Name</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Handle / SKU</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">{{ $erpDisplayName }} ID</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
                         <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Last Synced</th>
@@ -261,30 +280,35 @@
                         </td>
                         
                     @else
-                        {{-- Ecom → ERP data --}}
+                        {{-- Ecom → ERP data (same columns as ERP → Ecom) --}}
                         <td class="px-4 py-3 text-gray-700 font-medium font-mono text-xs">{{ $product->ecom_id }}</td>
                         <td class="px-4 py-3">
                             <div class="text-gray-900 font-medium">
                                 {{ Str::limit($product->product_name ?? $product->ecom_handle ?? '—', 40) }}
                             </div>
-                            @if($product->ecom_handle && $product->product_name)
-                                <div class="text-xs text-gray-400">{{ $product->ecom_handle }}</div>
-                            @endif
+                        </td>
+                        <td class="px-4 py-3 text-gray-600 font-mono text-xs">
+                            {{ $product->sku ?? $product->ecom_handle ?? '—' }}
                         </td>
                         <td class="px-4 py-3 text-gray-600">
-                            @if($product->erp_id)
-                                <span class="font-medium">#{{ $product->erp_id }}</span>
+                            @if($product->erp_id && $product->erp_id !== '0')
+                                <span class="font-mono text-xs">#{{ $product->erp_id }}</span>
                             @else
-                                <span class="text-gray-400">—</span>
+                                <span class="text-gray-400 text-xs">Not pushed</span>
                             @endif
                         </td>
                         <td class="px-4 py-3">
-                            @if($product->latest_log_status === 'success')
+                            @php
+                                $notPushed = !$product->erp_id || $product->erp_id === '0';
+                            @endphp
+                            @if($product->latest_log_status === 'success' && !$notPushed)
                                 <span class="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-md text-xs font-medium">✓ Synced</span>
+                            @elseif($product->latest_log_status === 'success' && $notPushed)
+                                <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-md text-xs font-medium">↓ Fetched</span>
                             @elseif($product->latest_log_status === 'failed')
                                 <span class="px-2 py-1 bg-red-100 text-red-700 rounded-md text-xs font-medium">✗ Failed</span>
                             @else
-                                <span class="px-2 py-1 bg-gray-100 text-gray-600 rounded-md text-xs font-medium">⏳ Pending</span>
+                                <span class="px-2 py-1 bg-amber-100 text-amber-700 rounded-md text-xs font-medium">⏳ Pending</span>
                             @endif
                         </td>
                         <td class="px-4 py-3 text-gray-500 text-xs">
@@ -295,7 +319,14 @@
                     <td class="px-4 py-3 text-right">
                         <div class="flex items-center justify-end gap-2">
                             {{-- View Button --}}
-                            <a href="{{ route('dashboard.products.show', $product->odoo_id ?? $product->erp_id) }}" 
+                            @php
+                                // erp_to_ecom: use erp/odoo id; ecom_to_erp: use ecom_id since erp_id may be null
+                                $showId = ($syncMode === 'ecom_to_erp')
+                                    ? ($product->ecom_id ?? $product->erp_id ?? null)
+                                    : ($product->odoo_id ?? $product->erp_id ?? $product->ecom_id ?? null);
+                            @endphp
+                            @if($showId)
+                            <a href="{{ route('dashboard.products.show', $showId) }}" 
                                class="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 hover:border-indigo-400 bg-white hover:bg-indigo-50 px-2 py-1 rounded-lg transition">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
@@ -303,9 +334,9 @@
                                 </svg>
                                 Info
                             </a>
+                            @endif
 
-                            {{-- Tools Dropdown (only for ERP → Ecom) --}}
-                            @if($syncMode === 'erp_to_ecom' || ($syncMode === 'bidirectional' && ($direction ?? 'erp_to_ecom') === 'erp_to_ecom'))
+                            {{-- Tools Dropdown — always visible, direction-aware --}}
                             <div class="relative" x-data="{ open: false }">
                                 <button @click="open = !open"
                                         class="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 hover:border-gray-400 bg-white hover:bg-gray-50 px-2 py-1 rounded-lg transition">
@@ -316,51 +347,66 @@
                                 </button>
 
                                 <div x-show="open" x-cloak @click.outside="open = false"
-                                     class="absolute right-0 z-30 mt-1 w-52 bg-white border border-gray-200 rounded-xl shadow-xl py-1.5">
+                                     class="absolute right-0 z-30 mt-1 w-56 bg-white border border-gray-200 rounded-xl shadow-xl py-1.5">
 
-                                    {{-- Fetch from Odoo --}}
+                                    @if($syncMode === 'erp_to_ecom' || $syncMode === 'bidirectional')
+                                    {{-- ERP → Ecom: Fetch from Odoo + Push to Shopify --}}
                                     <div class="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">{{ $erpDisplayName }}</div>
                                     <form method="POST" action="{{ route('dashboard.products.fetch-single', $product->erp_id ?? $product->odoo_id) }}">
                                         @csrf
-                                        <button type="submit"
-                                                class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 transition">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-                                            </svg>
+                                        <button type="submit" class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 transition">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                                             Fetch from {{ $erpDisplayName }}
                                         </button>
                                     </form>
-
                                     <div class="border-t border-gray-100 my-1"></div>
-                                    <div class="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">Push</div>
-
-                                    {{-- Post to Shopify --}}
                                     <form method="POST" action="{{ route('dashboard.products.post-single', $product->erp_id ?? $product->odoo_id) }}">
                                         @csrf
-                                        <button type="submit"
-                                                class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4 4m0 0l4-4m-4 4V4"/>
-                                            </svg>
-                                            Push to {{ ucfirst($ecomDriver) }}
+                                        <button type="submit" class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4 4m0 0l4-4m-4 4V4"/></svg>
+                                            Push to {{ $ecomDisplayName }}
                                         </button>
                                     </form>
+                                    @endif
+
+                                    @if($syncMode === 'ecom_to_erp' || $syncMode === 'bidirectional')
+                                    {{-- Ecom → ERP: Fetch from Shopify + Push to Odoo --}}
+                                    @if($syncMode === 'bidirectional')<div class="border-t border-gray-100 my-1"></div>@endif
+                                    <div class="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">{{ $ecomDisplayName }}</div>
+                                    @php $ecomProductId = $product->ecom_id ?? $product->ecom_product_id ?? null; @endphp
+                                    @if($ecomProductId)
+                                    <form method="POST" action="{{ route('dashboard.products.pull-single', $ecomProductId) }}">
+                                        @csrf
+                                        <button type="submit" class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 transition">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                                            Fetch from {{ $ecomDisplayName }}
+                                        </button>
+                                    </form>
+                                    <div class="border-t border-gray-100 my-1"></div>
+                                    <form method="POST" action="{{ route('dashboard.products.push-single-to-erp', $ecomProductId) }}">
+                                        @csrf
+                                        <button type="submit" class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4 4m0 0l4-4m-4 4V4"/></svg>
+                                            Push to {{ $erpDisplayName }}
+                                        </button>
+                                    </form>
+                                    @endif
+                                    @endif
 
                                     {{-- View on Shopify --}}
-                                    @if($product->ecom_product_id)
+                                    @php $viewId = $product->ecom_product_id ?? $product->ecom_id ?? null; @endphp
+                                    @if($viewId)
                                     <div class="border-t border-gray-100 my-1"></div>
-                                    <a href="https://admin.shopify.com/store/{{ str_replace('.myshopify.com', '', $shopifyStore) }}/products/{{ $product->ecom_product_id }}"
+                                    <a href="https://admin.shopify.com/store/{{ str_replace('.myshopify.com', '', $shopifyStore) }}/products/{{ $viewId }}"
                                        target="_blank"
                                        class="w-full text-left px-4 py-2 text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 flex items-center gap-2 transition">
-                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
-                                        </svg>
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
                                         View on {{ $ecomDisplayName }} ↗
                                     </a>
                                     @endif
+
                                 </div>
                             </div>
-                            @endif
                         </div>
                     </td>
                 </tr>

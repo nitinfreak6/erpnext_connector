@@ -6,6 +6,7 @@
 <div class="max-w-5xl">
     <div class="mb-4 flex items-center justify-between">
         <a href="{{ route('dashboard.products') }}" class="text-sm text-indigo-600 hover:underline">← Back to Products</a>
+        @if(!empty($odooId))
         <form method="POST" action="{{ route('dashboard.products.refresh', $odooId) }}">
             @csrf
             @method('PATCH')
@@ -18,6 +19,7 @@
                 Re-fetch from {{ $erpDisplayName }}
             </button>
         </form>
+        @endif
     </div>
 
     @if(session('success'))
@@ -39,11 +41,17 @@
                     @endif
                 </div>
                 <p class="text-xs text-gray-400 mt-1">
+                    @if(!empty($data['fetched_at']))
                     Cached: {{ \Carbon\Carbon::parse($data['fetched_at'])->format('Y-m-d H:i:s') }}
                     &nbsp;·&nbsp;
                     File: <code class="bg-gray-100 px-1 rounded">storage/app/products/{{ $erpId ?? $odooId }}.json</code>
                     &nbsp;·&nbsp;
                     <span class="text-emerald-600 font-medium">No {{ $erpDisplayName }} API call</span>
+                    @elseif(!empty($data['ecom_id']))
+                    {{ $ecomDisplayName ?? 'Ecom' }} ID: <code class="bg-gray-100 px-1 rounded">{{ $data['ecom_id'] }}</code>
+                    &nbsp;·&nbsp;
+                    <span class="text-blue-600 font-medium">Fetched from {{ $ecomDisplayName ?? 'Ecom' }}</span>
+                    @endif
                 </p>
             </div>
             <div class="text-right text-xs text-gray-400 space-y-1">

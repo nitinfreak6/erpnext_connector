@@ -87,3 +87,9 @@ Schedule::command('sync:amazon-orders')
 Schedule::command('logs:prune --days=30')
     ->weekly()
     ->runInBackground();
+	
+	// Runs every hour: checks for items pending > 8 hours and PHP errors in the last hour.
+Schedule::command('alerts:send-pending')
+    ->hourly()
+    ->runInBackground()
+    ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('Cron failed: alerts:send-pending'));

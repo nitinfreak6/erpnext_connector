@@ -32,8 +32,15 @@ class FetchEcomOrdersOnlyJob implements ShouldQueue
     public function handle(EcomInterface $ecom, SettingsService $settings): void
     {
         $driver = $ecom->driverName();
-        $state  = SyncQueueState::forType('orders');
-        $since  = $state->last_ecom_write_date ?? now()->subDays(30)->toIso8601String();
+
+        // Always read fresh from DB — avoids stale cached cursor
+        $state = SyncQueueState::forType('orders');
+        $state->refresh();
+
+        // Use UTC ISO format — Shopify requires UTC or timezone-aware timestamp
+        $since = $state->last_ecom_write_date
+            ? \Carbon\Carbon::parse($state->last_ecom_write_date)->utc()->toIso8601String()
+            : now()->utc()->subDays(30)->toIso8601String();
 
         Log::info("FetchEcomOrdersOnlyJob [{$driver}]: fetching since {$since}");
 
@@ -42,49 +49,66 @@ class FetchEcomOrdersOnlyJob implements ShouldQueue
             'updated_at_min' => $since,
         ]);
 
-        $fetched  = 0;
-        $skipped  = 0;
+        $fetched         = 0;
+        $skipped         = 0;
+        $latestUpdatedAt = null;
 
         foreach ($orders as $order) {
-            $ecomId = (string) ($order['id'] ?? '');
+            $ecomId    = (string) ($order['id'] ?? '');
+            $updatedAt = $order['updated_at'] ?? null;
             if (!$ecomId) continue;
 
-            // Check if already fully posted to ERP
+            // Track latest updated_at for cursor
+            if ($updatedAt && (!$latestUpdatedAt || $updatedAt > $latestUpdatedAt)) {
+                $latestUpdatedAt = $updatedAt;
+            }
+
+            // Skip if updated_at matches stored — order hasn't changed regardless of status
             $existing = SyncMapping::whereIn('entity_type', ['order', 'sales_order'])
                 ->where('ecom_id', $ecomId)
                 ->first();
 
-            if ($existing && $existing->erp_id && $existing->ecom_status === 'posted') {
-                $skipped++;
-                continue;
-            }
-			
-			
+            if ($existing) {
+                $prevMeta      = is_array($existing->metadata) ? $existing->metadata : json_decode($existing->metadata ?? '{}', true);
+                $prevUpdatedAt = $prevMeta['updated_at'] ?? null;
 
-            // Cache raw order data in metadata — ready for Post Sales
+                if ($prevUpdatedAt && $updatedAt && $prevUpdatedAt === $updatedAt) {
+                    $skipped++;
+                    continue;
+                }
+            }
+
+            // New or updated — store as pending for Post Sales
             SyncMapping::updateOrCreate(
+                ['entity_type' => 'sales_order', 'ecom_id' => $ecomId, 'ecom_driver' => $driver],
                 [
-                    'entity_type' => 'sales_order',
-                    'ecom_id'     => $ecomId,
-                    'ecom_driver' => $driver,
-                ],
-                [
-                    'ecom_handle'          => $order['name'] ?? null,
-                    'last_sync_direction'  => 'ecom_to_erp',
-                    'ecom_status'          => 'pending',
-                    'metadata'             => $order,   // cast='array' handles serialisation; do NOT json_encode
-                    'last_synced_at'       => now(),
+                    'ecom_handle'         => $order['name'] ?? null,
+                    'last_sync_direction' => 'ecom_to_erp',
+                    'ecom_status'         => 'pending',
+                    'metadata'            => $order,
+                    'last_synced_at'      => now(),
                 ]
             );
-
             $fetched++;
         }
 
-        // Advance cursor
+        // Advance cursor to latest order updated_at + 1 second
+        // Using order timestamps (not now()) so unchanged orders are excluded next run
+        $nextCursor = $latestUpdatedAt
+            ? \Carbon\Carbon::parse($latestUpdatedAt)->utc()->addSecond()->toIso8601String()
+            : now()->utc()->toIso8601String();
+
         $state->update([
-            'last_ecom_write_date' => now()->toIso8601String(),
+            'last_ecom_write_date' => $nextCursor,
             'last_poll_at'         => now(),
-            'notes'                => "Fetched: {$fetched}, Skipped: {$skipped}",
+            'notes'                => $fetched === 0 ? 'nothing_changed' : "Fetched: {$fetched}, Skipped: {$skipped}",
+        ]);
+
+        Log::info("FetchEcomOrdersOnlyJob [{$driver}]: fetching since {$since}");
+
+        $orders = $ecom->getOrders([
+            'status'         => 'any',
+            'updated_at_min' => $since,
         ]);
 
         Log::info("FetchEcomOrdersOnlyJob [{$driver}]: done. Fetched: {$fetched}, Skipped: {$skipped}");

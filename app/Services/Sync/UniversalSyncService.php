@@ -190,10 +190,18 @@ class UniversalSyncService
                 $result = $this->createInErp($entityType, $erpPayload);
                 $erpId  = (string) ($result['id'] ?? '');
 
-                if ($erpId && $ecomId) {
+                // Always store mapping — even when erpId is 0 (product pulled but ERP create not implemented yet)
+                // This ensures products appear in the ecom_to_erp table immediately after pull
+                if ($ecomId) {
                     SyncMapping::updateOrCreate(
-                        ['entity_type' => $entityType, 'ecom_id' => $ecomId, 'ecom_driver' => $this->ecom->driverName()],
-                        ['erp_id' => $erpId, 'erp_driver' => $this->erp->driverName(), 'last_synced_at' => now(), 'last_sync_direction' => 'ecom_to_erp']
+                        ['entity_type' => $entityType, 'ecom_id' => (string) $ecomId, 'ecom_driver' => $this->ecom->driverName()],
+                        [
+                            'erp_id'              => ($erpId && $erpId !== '0') ? $erpId : null,
+                            'erp_driver'          => $this->erp->driverName(),
+                            'last_synced_at'      => now(),
+                            'last_sync_direction' => 'ecom_to_erp',
+                            'ecom_handle'         => $ecomData['handle'] ?? $ecomData['name'] ?? null,
+                        ]
                     );
                 }
 
@@ -468,8 +476,13 @@ class UniversalSyncService
         $id = match ($entityType) {
             'customer'    => $this->erp->createCustomer($payload),
             'sales_order' => $this->erp->createOrder($payload),
+            'product'     => $this->erp->createProduct($payload),
             default       => 0,
         };
+
+        if ($id === 0 && $entityType !== 'product') {
+            throw new \RuntimeException("createInErp: no handler for entity type '{$entityType}'");
+        }
 
         return ['id' => $id];
     }

@@ -69,6 +69,8 @@ class FetchErpInventoryJob implements ShouldQueue
 
             Log::info("FetchErpInventoryJob: raw quants count=" . count($quants));
             $latestWriteDate = $writeDate;
+            $stored  = 0;
+            $skipped = 0;
 
             foreach ($quants as $quant) {
                 if ($this->autoPush) {
@@ -78,9 +80,34 @@ class FetchErpInventoryJob implements ShouldQueue
                     if ($settings->isAmazonChannelEnabled()) {
                         PushInventoryToAmazonJob::dispatch($quant);
                     }
+                    $stored++;
                 } else {
-                    // Manual Fetch Stock button: store as pending so Post Stock can push later
-                    $erpId = (string) ($quant['product_id'][0] ?? $quant['id'] ?? '');
+                    // Manual Fetch Stock button: store as pending so Post Stock can push later.
+                    // Skip if write_date and quantity unchanged.
+                    $erpId        = (string) ($quant['product_id'][0] ?? $quant['id'] ?? '');
+                    $newWriteDate = $quant['write_date'] ?? null;
+                    $newQty       = $quant['quantity'] ?? $quant['qty'] ?? null;
+
+                    $existing = SyncMapping::where('entity_type', 'inventory')
+                        ->where('erp_id', $erpId)
+                        ->where('erp_driver', $settings->erpDriver())
+                        ->first();
+
+                    if ($existing) {
+                        $prevMeta      = is_array($existing->metadata) ? $existing->metadata : json_decode($existing->metadata ?? '{}', true);
+                        $prevWriteDate = $prevMeta['write_date'] ?? null;
+                        $prevQty       = $prevMeta['quantity'] ?? $prevMeta['qty'] ?? null;
+
+                        if ($prevWriteDate !== null && $prevWriteDate === $newWriteDate && $prevQty == $newQty) {
+                            Log::debug("FetchErpInventoryJob: erp#{$erpId} unchanged, skipping.");
+                            $skipped++;
+                            if ($quant['write_date'] > $latestWriteDate) {
+                                $latestWriteDate = $quant['write_date'];
+                            }
+                            continue;
+                        }
+                    }
+
                     SyncMapping::updateOrCreate(
                         [
                             'entity_type' => 'inventory',
@@ -88,12 +115,13 @@ class FetchErpInventoryJob implements ShouldQueue
                             'erp_driver'  => $settings->erpDriver(),
                         ],
                         [
-                            'ecom_status'          => 'pending',
-                            'metadata'             => $quant,
-                            'last_synced_at'       => now(),
-                            'last_sync_direction'  => 'erp_to_ecom',
+                            'ecom_status'         => 'pending',
+                            'metadata'            => $quant,
+                            'last_synced_at'      => now(),
+                            'last_sync_direction' => 'erp_to_ecom',
                         ]
                     );
+                    $stored++;
                 }
 
                 if ($quant['write_date'] > $latestWriteDate) {
@@ -101,10 +129,22 @@ class FetchErpInventoryJob implements ShouldQueue
                 }
             }
 
-            // Advance cursor by 1 second so next run uses strict > and avoids re-fetching
-            $state->markComplete($latestWriteDate);
+            // Build notes for controller message BEFORE markComplete (which can clear notes)
+            $completionNotes = null;
+            if (!$this->autoPush) {
+                $completionNotes = $stored === 0 ? 'nothing_changed' : "fetched:{$stored}";
+                if ($skipped > 0) $completionNotes .= ":skipped:{$skipped}";
+            }
 
-            Log::info("FetchErpInventoryJob [{$erp->driverName()}]: dispatched " . count($quants) . ' inventory jobs.');
+            // Advance cursor by 1 second — query now uses strict > so this
+            // ensures the last-seen write_date is excluded on next run.
+            if ($latestWriteDate !== $writeDate) {
+                $latestWriteDate = date('Y-m-d H:i:s', strtotime($latestWriteDate) + 1);
+            }
+
+            $state->markComplete($latestWriteDate, $completionNotes);
+
+            Log::info("FetchErpInventoryJob [{$erp->driverName()}]: stored={$stored} skipped={$skipped}");
         } catch (\Throwable $e) {
             $state->update(['is_running' => false, 'notes' => $e->getMessage()]);
             throw $e;

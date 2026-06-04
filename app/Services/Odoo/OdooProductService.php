@@ -106,6 +106,20 @@ class OdooProductService
     /**
      * Get all active, saleable products (for full sync).
      */
+    /**
+     * Get a single product.template by ID, including write_date.
+     */
+    public function getById(int $id): ?array
+    {
+        $results = $this->odoo->searchRead(
+            'product.template',
+            [['id', '=', $id]],
+            self::TEMPLATE_FIELDS,
+            ['limit' => 1]
+        );
+        return $results[0] ?? null;
+    }
+
     public function getAllActive(int $offset = 0, int $limit = 100): array
     {
         return $this->odoo->searchRead(

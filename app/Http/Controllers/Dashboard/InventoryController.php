@@ -17,113 +17,143 @@ class InventoryController extends Controller
     public function __construct(private readonly SettingsService $settings) {}
 
     public function index(Request $request)
-    {
-        $search  = $request->input('search');
-        $channel = $request->input('channel', 'all');
-        $status  = $request->input('status');
+	{
+		$search  = $request->input('search');
+		$channel = $request->input('channel', 'all');
+		$status  = $request->input('status');
 
-        // Inventory logs are saved with entity_type = 'inventory' or 'amazon_inventory'
-        $entityTypes = match($channel) {
-            'shopify' => ['inventory'],
-            'amazon'  => ['amazon_inventory'],
-            default   => ['inventory', 'amazon_inventory'],
-        };
+		$entityTypes = match($channel) {
+			'shopify' => ['inventory'],
+			'amazon'  => ['amazon_inventory'],
+			default   => ['inventory', 'amazon_inventory'],
+		};
 
-        // Show inventory sync logs with product name from cache
-        $logsQuery = SyncLog::whereIn('entity_type', $entityTypes)
-            ->orderByDesc('created_at');
+		// ── PRIMARY SOURCE: SyncMapping (written by Fetch Stock) ──────────────
+		$logsQuery = SyncMapping::where('entity_type', 'inventory')
+			->orderByDesc('last_synced_at');
 
-        if ($status) {
-            $logsQuery->where('status', $status);
-        }
+		if ($status) {
+			$logsQuery->where('ecom_status', $status);
+		}
 
-        if ($search) {
-            $logsQuery->where(function ($q) use ($search) {
-                $q->where('entity_id', 'like', "%{$search}%")
-                  ->orWhere('request_payload', 'like', "%{$search}%");
-            });
-        }
+		if ($search) {
+			$logsQuery->where(function ($q) use ($search) {
+				$q->where('erp_id', 'like', "%{$search}%")
+				  ->orWhere('ecom_id', 'like', "%{$search}%");
+			});
+		}
 
-        $logs = $logsQuery->paginate(50)->withQueryString();
+		$logs = $logsQuery->paginate(50)->withQueryString();
 
-        // Build location name map from settings for display
-        $locationMap = array_flip($this->settings->odooLocationMap()); // shopify_id => odoo_id
+		// ── ENRICH: product name from cache + latest push log per row ─────────
+		$logs->getCollection()->transform(function ($mapping) {
+			$erpCol = ProductCache::erpIdColumn();
+			$cache  = ProductCache::where($erpCol, $mapping->erp_id)
+				->orWhere('odoo_id', $mapping->erp_id)
+				->first();
 
-        // Enrich with product name from cache
-        $logs->getCollection()->transform(function ($log) use ($locationMap) {
-            $erpCol = ProductCache::erpIdColumn();
-            $cache  = ProductCache::where($erpCol, $log->entity_id)
-                ->orWhere('odoo_id', $log->entity_id)
-                ->first();
-            $log->product_name = $cache?->name ?? 'Product #' . $log->entity_id;
-            $log->sku          = $cache?->default_code ?? '—';
+			$mapping->product_name = $cache?->name ?? 'Product #' . $mapping->erp_id;
+			$mapping->sku          = $cache?->default_code ?? '—';
 
-            // Decode payload to surface location IDs for display
-            $payload = is_string($log->request_payload)
-                ? json_decode($log->request_payload, true)
-                : (array) ($log->request_payload ?? []);
-            $log->erp_qty            = $payload['qty'] ?? null;
-            $log->shopify_location_id = $payload['shopify_location_id'] ?? null;
-            $log->erp_location_id    = $payload['erp_location_id'] ?? null;
+			// Pull qty/location from stored metadata
+			$meta = is_array($mapping->metadata) ? $mapping->metadata : json_decode($mapping->metadata ?? '{}', true);
+			$mapping->erp_qty            = $meta['quantity'] ?? $meta['qty'] ?? null;
+			$mapping->shopify_location_id = $meta['shopify_location_id'] ?? null;
+			$mapping->erp_location_id    = $meta['location_id'][0] ?? $meta['erp_location_id'] ?? null;
 
-            return $log;
-        });
+			// Latest push log (SyncLog only written by PushInventoryToEcomJob)
+			$mapping->latest_log = SyncLog::where('entity_type', 'inventory')
+				->where('entity_id', (string) $mapping->erp_id)
+				->latest()
+				->first();
 
-        // Recent logs for bottom section
-        $recentLogs = SyncLog::whereIn('entity_type', $entityTypes)
-            ->orderByDesc('created_at')
-            ->limit(10)
-            ->get();
+			return $mapping;
+		});
 
-        $syncState = [
-            'inventory'        => SyncQueueState::where('sync_type', 'inventory')->first()
-                ?? (object)['is_running' => false, 'last_poll_at' => null, 'last_erp_write_date' => null],
-            'amazon_inventory' => SyncQueueState::where('sync_type', 'amazon_inventory')->first()
-                ?? (object)['is_running' => false, 'last_poll_at' => null, 'last_erp_write_date' => null],
-        ];
+		// Recent push logs for bottom section (unchanged — still from SyncLog)
+		$recentLogs = SyncLog::whereIn('entity_type', ['inventory', 'amazon_inventory'])
+			->orderByDesc('created_at')
+			->limit(10)
+			->get();
 
-        $stats = [
-            'synced_today' => SyncLog::whereIn('entity_type', $entityTypes)
-                ->where('status', 'success')
-                ->whereDate('created_at', today())->count(),
-            'failed_today' => SyncLog::whereIn('entity_type', $entityTypes)
-                ->where('status', 'failed')
-                ->whereDate('created_at', today())->count(),
-            'total_synced' => SyncLog::where('entity_type', 'inventory')
-                ->where('status', 'success')->count(),
-            'total_skus'   => ProductCache::count(),
-        ];
+		$syncState = [
+			'inventory'        => SyncQueueState::where('sync_type', 'inventory')->first()
+				?? (object)['is_running' => false, 'last_poll_at' => null, 'last_erp_write_date' => null],
+			'amazon_inventory' => SyncQueueState::where('sync_type', 'amazon_inventory')->first()
+				?? (object)['is_running' => false, 'last_poll_at' => null, 'last_erp_write_date' => null],
+		];
 
-        // Keep $variants for blade compatibility — use logs as the main data
-        $variants = $logs;
+		$stats = [
+			'synced_today' => SyncLog::whereIn('entity_type', $entityTypes)
+				->where('status', 'success')
+				->whereDate('created_at', today())->count(),
+			'failed_today' => SyncLog::whereIn('entity_type', $entityTypes)
+				->where('status', 'failed')
+				->whereDate('created_at', today())->count(),
+			'total_synced' => SyncLog::where('entity_type', 'inventory')
+				->where('status', 'success')->count(),
+			'total_skus'   => ProductCache::count(),
+		];
 
-        $erpDisplayName  = $this->settings->erpDisplayName();
-        $ecomDisplayName = $this->settings->ecomDisplayName();
+		$variants = $logs;  // blade uses $variants as the paginator
 
-        return view('dashboard.inventory', compact(
-            'variants', 'logs', 'search', 'channel',
-            'recentLogs', 'syncState', 'stats',
-            'erpDisplayName', 'ecomDisplayName'
-        ));
-    }
+		$erpDisplayName  = $this->settings->erpDisplayName();
+		$ecomDisplayName = $this->settings->ecomDisplayName();
+		$syncMode        = $this->settings->inventorySyncMode();
+
+		return view('dashboard.inventory', compact(
+			'variants', 'logs', 'search', 'channel',
+			'recentLogs', 'syncState', 'stats',
+			'erpDisplayName', 'ecomDisplayName', 'syncMode'
+		));
+	}
 
 
     // ── Fetch Stock (all): pull from ERP → store pending ─────────────────
     public function fetchStock(Request $request)
     {
+        $syncMode = $this->settings->inventorySyncMode();
+
         try {
-            // autoPush: false — manual Fetch Stock button only fetches/stores as pending.
-            // Use "Post Stock" button to push to ecom.
-            FetchErpInventoryJob::dispatchSync(locationId: null, autoPush: false);
+            if ($syncMode === 'ecom_to_erp') {
+                // Fetch from Shopify — pull inventory levels and store as pending
+                \App\Jobs\Ecom\FetchEcomInventoryJob::dispatchSync();
+            } else {
+                // Fetch from Odoo — autoPush:false stores as pending only
+                FetchErpInventoryJob::dispatchSync(autoPush: false);
+            }
+			
+			
+
+            $notes = \App\Models\SyncQueueState::forType('inventory')->fresh()->notes ?? '';
+
+            if ($notes === 'nothing_changed' || str_starts_with($notes, 'fetched:0')) {
+                $source = $syncMode === 'ecom_to_erp' ? $this->settings->ecomDisplayName() : $this->settings->erpDisplayName();
+                return redirect()->route('dashboard.inventory')
+                    ->with('info', 'No stock changes in ' . $source . ' since last fetch.');
+            }
+
+            if (str_starts_with($notes, 'fetched:')) {
+                preg_match('/fetched:(\d+)(?::skipped:(\d+))?/', $notes, $m);
+                $fetched  = $m[1] ?? '?';
+                $skipped  = isset($m[2]) ? " ({$m[2]} unchanged skipped)" : '';
+                $pushTo   = $syncMode === 'ecom_to_erp' ? $this->settings->erpDisplayName() : $this->settings->ecomDisplayName();
+                return redirect()->route('dashboard.inventory')
+                    ->with('success', "{$fetched} stock update(s) fetched{$skipped}. Click Post Stock to push to {$pushTo}.");
+            }
+
+            $source = $syncMode === 'ecom_to_erp' ? $this->settings->ecomDisplayName() : $this->settings->erpDisplayName();
+            $dest   = $syncMode === 'ecom_to_erp' ? $this->settings->erpDisplayName() : $this->settings->ecomDisplayName();
             return redirect()->route('dashboard.inventory')
-                ->with('success', 'Stock fetched from ' . $this->settings->erpDisplayName() . '. Use "Post Stock" to push updates.');
+                ->with('success', "Stock fetched from {$source}. Click Post Stock to push to {$dest}.");
+
         } catch (\Throwable $e) {
             return redirect()->route('dashboard.inventory')
                 ->with('error', 'Fetch stock failed: ' . $e->getMessage());
         }
     }
 
-    // ── Post Stock (all): push all pending inventory to Ecom ─────────────
+    // ── Post Stock (all): push pending inventory to Ecom ────────────────
     public function postStock(Request $request)
     {
         try {
@@ -137,32 +167,55 @@ class InventoryController extends Controller
                     ->with('info', 'No pending stock updates. Run Fetch Stock first.');
             }
 
-            $pushed = 0; $failed = 0;
+            $pushed = 0; $skipped = 0; $failed = 0;
+
             foreach ($pending as $mapping) {
-                $quant = is_array($mapping->metadata) ? $mapping->metadata : json_decode($mapping->metadata, true);
+                $quant = is_array($mapping->metadata)
+                    ? $mapping->metadata
+                    : json_decode($mapping->metadata, true);
+
                 if (empty($quant)) { $failed++; continue; }
+
                 try {
-                    PushInventoryToEcomJob::dispatchSync($quant);
+                    $invSyncMode = $this->settings->inventorySyncMode();
+                    if ($invSyncMode === 'ecom_to_erp') {
+                        \App\Jobs\Erp\PushInventoryToErpJob::dispatchSync($quant);
+                    } else {
+                        PushInventoryToEcomJob::dispatchSync($quant);
+                    }
                     $mapping->update(['ecom_status' => 'posted', 'last_synced_at' => now()]);
                     $pushed++;
                 } catch (\Throwable $e) {
+                    Log::error("postStock: failed for erp#{$mapping->erp_id}: " . $e->getMessage());
                     $failed++;
                 }
             }
 
-            $msg = "{$pushed} stock update(s) pushed to " . $this->settings->ecomDisplayName() . ".";
-            if ($failed) $msg .= " {$failed} failed.";
+            if ($pushed === 0 && $failed === 0) {
+                return redirect()->route('dashboard.inventory')
+                    ->with('info', 'No stock updates to push.');
+            }
+
+            $dest = $this->settings->inventorySyncMode() === 'ecom_to_erp'
+                ? $this->settings->erpDisplayName()
+                : $this->settings->ecomDisplayName();
+            $msg = "{$pushed} stock update(s) pushed to {$dest}.";
+            if ($failed)  $msg .= " {$failed} failed — check logs.";
+
             return redirect()->route('dashboard.inventory')
                 ->with($failed ? 'warning' : 'success', $msg);
+
         } catch (\Throwable $e) {
             return redirect()->route('dashboard.inventory')
                 ->with('error', 'Post stock failed: ' . $e->getMessage());
         }
     }
 
-    // ── Fetch Stock (single SKU) ──────────────────────────────────────────
+    // ── Fetch Stock (single SKU) — direction-aware, store as pending ──────
     public function fetchStockSingle(Request $request, int $erpId)
     {
+        $syncMode = $this->settings->inventorySyncMode();
+
         try {
             $erp    = app(\App\Services\Erp\ErpInterface::class);
             $quants = $erp->getInventoryModifiedSince('2000-01-01 00:00:00');
@@ -172,12 +225,32 @@ class InventoryController extends Controller
                 return back()->with('error', "No stock data found for product #{$erpId} in " . $this->settings->erpDisplayName() . '.');
             }
 
+            // Skip if unchanged
+            $existing = SyncMapping::where('entity_type', 'inventory')
+                ->where('erp_id', (string) $erpId)
+                ->where('erp_driver', $this->settings->erpDriver())
+                ->first();
+
+            if ($existing) {
+                $prevMeta  = is_array($existing->metadata) ? $existing->metadata : json_decode($existing->metadata ?? '{}', true);
+                $prevQty   = $prevMeta['quantity'] ?? $prevMeta['qty'] ?? null;
+                $newQty    = $quant['quantity'] ?? $quant['qty'] ?? null;
+                $prevWrite = $prevMeta['write_date'] ?? null;
+                $newWrite  = $quant['write_date'] ?? null;
+
+                if ($prevWrite !== null && $prevWrite === $newWrite && $prevQty == $newQty) {
+                    return back()->with('info', "Product #{$erpId} stock unchanged — skipped.");
+                }
+            }
+
+            $direction = $syncMode === 'ecom_to_erp' ? 'ecom_to_erp' : 'erp_to_ecom';
             SyncMapping::updateOrCreate(
                 ['entity_type' => 'inventory', 'erp_id' => (string) $erpId, 'erp_driver' => $this->settings->erpDriver()],
-                ['ecom_status' => 'pending', 'metadata' => $quant, 'last_synced_at' => now(), 'last_sync_direction' => 'erp_to_ecom']
+                ['ecom_status' => 'pending', 'metadata' => $quant, 'last_synced_at' => now(), 'last_sync_direction' => $direction]
             );
 
-            return back()->with('success', "Stock fetched for product #{$erpId}. Click Post Stock to push.");
+            $dest = $syncMode === 'ecom_to_erp' ? $this->settings->erpDisplayName() : $this->settings->ecomDisplayName();
+            return back()->with('success', "Stock fetched for product #{$erpId}. Click Post Stock to push to {$dest}.");
         } catch (\Throwable $e) {
             return back()->with('error', 'Fetch stock failed: ' . $e->getMessage());
         }
@@ -196,11 +269,46 @@ class InventoryController extends Controller
                 return back()->with('error', "No pending stock for #{$erpId}. Run Fetch Stock first.");
             }
 
-            $quant = is_array($mapping->metadata) ? $mapping->metadata : json_decode($mapping->metadata, true);
-            PushInventoryToEcomJob::dispatchSync($quant);
+            // Skip if already posted and quantity/write_date unchanged
+            // Check if current Odoo quantity matches stored — skip if unchanged
+            if ($mapping->ecom_status === 'posted' || $mapping->ecom_status === 'pending') {
+                $meta     = is_array($mapping->metadata) ? $mapping->metadata : json_decode($mapping->metadata, true);
+                $qty      = $meta['quantity'] ?? $meta['qty'] ?? null;
+                $writeDate = $meta['write_date'] ?? null;
+
+                // Re-fetch current quant to compare
+                $erp      = app(\App\Services\Erp\ErpInterface::class);
+                $quants   = $erp->getInventoryModifiedSince('2000-01-01 00:00:00');
+                $current  = collect($quants)->firstWhere(fn($q) => ($q['product_id'][0] ?? null) == $erpId);
+
+                if ($current) {
+                    $currentQty   = $current['quantity'] ?? $current['qty'] ?? null;
+                    $currentWrite = $current['write_date'] ?? null;
+
+                    if ($qty !== null && $qty == $currentQty && $writeDate === $currentWrite) {
+                        return back()->with('info', "Product #{$erpId} stock unchanged — skipped.");
+                    }
+
+                    // Quantity changed — update stored metadata before pushing
+                    $mapping->update(['metadata' => $current, 'ecom_status' => 'pending']);
+                    $quant = $current;
+                } else {
+                    $quant = $meta;
+                }
+            } else {
+                $quant = is_array($mapping->metadata) ? $mapping->metadata : json_decode($mapping->metadata, true);
+            }
+
+            $invMode = $this->settings->inventorySyncMode();
+            if ($invMode === 'ecom_to_erp') {
+                \App\Jobs\Erp\PushInventoryToErpJob::dispatchSync($quant);
+            } else {
+                PushInventoryToEcomJob::dispatchSync($quant);
+            }
             $mapping->update(['ecom_status' => 'posted', 'last_synced_at' => now()]);
 
-            return back()->with('success', "Stock pushed for product #{$erpId}.");
+            $dest = $invMode === 'ecom_to_erp' ? $this->settings->erpDisplayName() : $this->settings->ecomDisplayName();
+            return back()->with('success', "Stock pushed for product #{$erpId} to {$dest}.");
         } catch (\Throwable $e) {
             return back()->with('error', 'Post stock failed: ' . $e->getMessage());
         }

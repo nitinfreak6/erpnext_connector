@@ -40,12 +40,31 @@ class ProductCacheService
         return $count;
     }
 
-    public function fetchAndCacheSingle(int $erpId): ProductCache
+    public function fetchAndCacheSingle(int $erpId, bool $forceRefetch = false): ProductCache
     {
         $product = $this->erp->getProductById($erpId);
 
         if (!$product) {
             throw new \RuntimeException("ERP product #{$erpId} not found in {$this->erp->driverName()}.");
+        }
+
+        // Skip re-cache if write_date hasn't changed since last fetch — unless forced
+        if (!$forceRefetch) {
+            $erpIdCol  = ProductCache::erpIdColumn();
+            $existing  = ProductCache::where($erpIdCol, $erpId)->first();
+            $erpWriteDate = $product['write_date'] ?? null;
+
+            if ($existing && $erpWriteDate && $existing->fetched_at) {
+                $fetchedAt    = \Carbon\Carbon::parse($existing->fetched_at);
+                $erpWrittenAt = \Carbon\Carbon::parse($erpWriteDate);
+
+                if (!$erpWrittenAt->isAfter($fetchedAt)) {
+                    \Illuminate\Support\Facades\Log::info(
+                        "ProductCacheService: #{$erpId} unchanged (write_date {$erpWriteDate} ≤ fetched_at), skipping re-cache."
+                    );
+                    return $existing;
+                }
+            }
         }
 
         return $this->cacheProduct($product);

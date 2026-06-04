@@ -45,6 +45,19 @@ class PushOrderToEcomJob implements ShouldQueue
             return;
         }
 
+        // order_line contains only IDs — fetch full line item data before sending to Shopify
+        $lineIds = array_filter(
+            is_array($erpOrder['order_line'] ?? null) ? $erpOrder['order_line'] : [],
+            fn($v) => is_int($v) || (is_string($v) && ctype_digit($v))
+        );
+
+        if (!empty($lineIds)) {
+            $lines = $erp->getOrderLines(array_values($lineIds));
+            $erpOrder['order_line'] = $lines; // replace IDs with full line objects
+        } else {
+            Log::warning("PushOrderToEcomJob: ERP order #{$this->erpOrderId} has no order lines");
+        }
+
         $log = SyncLog::create([
             'direction'       => 'erp_to_ecom',
             'entity_type'     => 'order',
