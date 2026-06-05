@@ -250,7 +250,12 @@ class ShopifyInventoryService
             foreach ($node['inventoryLevels']['edges'] ?? [] as $edge) {
                 $level = $edge['node'];
 
-                if ($level['location']['id'] === $locationGid) {
+                // Normalize both GIDs before comparing — stored locationId may or may
+                // not already have the gid:// prefix, so compare numeric IDs only.
+                $returnedLocationNumeric = $this->fromGid($level['location']['id'] ?? '');
+                $targetLocationNumeric   = $this->fromGid($locationGid);
+
+                if ($returnedLocationNumeric === $targetLocationNumeric) {
                     foreach ($level['quantities'] as $q) {
                         if ($q['name'] === 'available') {
                             $available = $q['quantity'];

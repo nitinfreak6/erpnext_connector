@@ -348,6 +348,52 @@
         </div>
 
         {{-- ══════════════════════════════════════════════════════════
+             INVENTORY SETTINGS
+        ══════════════════════════════════════════════════════════ --}}
+        @php $inventoryMode = $ss->inventorySyncMode(); @endphp
+        <div class="dir-card">
+            <div class="dir-pill">
+                <span>−</span> Inventory Settings
+            </div>
+            <div class="dir-body">
+
+                {{-- Inventory Sync Direction --}}
+                <div class="dir-row" style="flex-direction:column; align-items:flex-start; gap:10px;"
+                     x-data="{ mode: '{{ $inventoryMode }}' }">
+                    <div class="dir-label">Inventory Sync Direction</div>
+                    <input type="hidden" name="inventory_sync_mode" :value="mode">
+
+                    <div class="sync-mode-group">
+                        <button type="button"
+                                :class="mode==='erp_to_ecom' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='erp_to_ecom'">
+                            <span class="smode-arrow">→</span>
+                            {{ $erpLabel }} → {{ $ecomLabel }}
+                        </button>
+                        <button type="button"
+                                :class="mode==='ecom_to_erp' ? 'smode-btn active' : 'smode-btn'"
+                                @click="mode='ecom_to_erp'">
+                            <span class="smode-arrow">→</span>
+                            {{ $ecomLabel }} → {{ $erpLabel }}
+                        </button>
+                    </div>
+
+                    <div class="flow-diagram" x-show="mode==='erp_to_ecom'">
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                    </div>
+                    <div class="flow-diagram" x-show="mode==='ecom_to_erp'">
+                        <span class="flow-node">{{ $ecomLabel }}</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-node">{{ $erpLabel }}</span>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        {{-- ══════════════════════════════════════════════════════════
              CUSTOMER SETTINGS
         ══════════════════════════════════════════════════════════ --}}
         @php $customerMode = $ss->customerSyncMode(); @endphp

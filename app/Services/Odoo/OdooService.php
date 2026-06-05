@@ -121,6 +121,12 @@ class OdooService
                 $lastError = $e;
                 $is429     = $this->is429($e);
 
+                // Non-retryable: XML-RPC marshal errors (e.g. action_apply_inventory
+                // returning None on Odoo SaaS 17/18). Retrying will never fix these.
+                if ($this->isNonRetryable($e)) {
+                    throw $e;
+                }
+
                 Log::warning("OdooService: attempt {$attempt}/{$attempts} failed", [
                     'model'  => $model,
                     'method' => $method,
@@ -239,6 +245,23 @@ class OdooService
     private function is429(\Throwable $e): bool
     {
         return $this->faultStringIs429($e->getMessage());
+    }
+
+    /**
+     * Returns true for errors that are deterministic and will never succeed on retry.
+     * Retrying these wastes time and fills logs with noise.
+     *
+     * Known cases:
+     *   - "cannot marshal None" — Odoo SaaS 17/18 action_apply_inventory returns a
+     *     window action dict / None which XML-RPC cannot serialize. This is a server-side
+     *     response serialization issue, not a transient failure.
+     */
+    private function isNonRetryable(\Throwable $e): bool
+    {
+        $msg = $e->getMessage();
+        return str_contains($msg, 'cannot marshal None')
+            || str_contains($msg, 'allow_none is enabled')
+            || str_contains($msg, 'Quants cannot be created for consumables or services');
     }
 
     private function faultStringIs429(string $text): bool

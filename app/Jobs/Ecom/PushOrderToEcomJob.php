@@ -29,12 +29,14 @@ class PushOrderToEcomJob implements ShouldQueue
     {
         $driver = $ecom->driverName();
 
-        $existing = SyncMapping::where('entity_type', 'order')
+        // Look up the pending mapping stored by fetch() — entity_type is 'sales_order'
+        $mapping = SyncMapping::whereIn('entity_type', ['sales_order', 'order'])
             ->where('erp_id', (string) $this->erpOrderId)
             ->first();
 
-        if ($existing) {
-            Log::debug("PushOrderToEcomJob: ERP order #{$this->erpOrderId} already mapped to {$driver} #{$existing->ecom_id}");
+        // If already pushed and has an ecom_id, skip
+        if ($mapping && $mapping->ecom_id) {
+            Log::debug("PushOrderToEcomJob: ERP order #{$this->erpOrderId} already mapped to {$driver} #{$mapping->ecom_id} — skipping.");
             return;
         }
 
@@ -53,7 +55,7 @@ class PushOrderToEcomJob implements ShouldQueue
 
         if (!empty($lineIds)) {
             $lines = $erp->getOrderLines(array_values($lineIds));
-            $erpOrder['order_line'] = $lines; // replace IDs with full line objects
+            $erpOrder['order_line'] = $lines;
         } else {
             Log::warning("PushOrderToEcomJob: ERP order #{$this->erpOrderId} has no order lines");
         }
@@ -62,7 +64,7 @@ class PushOrderToEcomJob implements ShouldQueue
             'direction'       => 'erp_to_ecom',
             'entity_type'     => 'order',
             'entity_id'       => (string) $this->erpOrderId,
-            'action'          => 'create',
+            'action'          => $mapping?->ecom_id ? 'update' : 'create',
             'status'          => 'processing',
             'request_payload' => json_encode($erpOrder),
         ]);
@@ -75,14 +77,30 @@ class PushOrderToEcomJob implements ShouldQueue
                 throw new \RuntimeException("No order ID returned from {$driver}.");
             }
 
-            SyncMapping::create([
-                'entity_type'         => 'order',
-                'erp_id'              => (string) $this->erpOrderId,
-                'ecom_id'             => $ecomOrderId,
-                'ecom_handle'         => $erpOrder['name'] ?? null,
-                'last_synced_at'      => now(),
-                'last_sync_direction' => 'erp_to_ecom',
-            ]);
+            // Update the existing pending mapping rather than creating a duplicate row
+            if ($mapping) {
+                $mapping->update([
+                    'entity_type'         => 'sales_order',
+                    'ecom_id'             => $ecomOrderId,
+                    'ecom_driver'         => $ecom->driverName(),
+                    'ecom_handle'         => $erpOrder['name'] ?? $mapping->ecom_handle,
+                    'ecom_status'         => 'posted',
+                    'last_synced_at'      => now(),
+                    'last_sync_direction' => 'erp_to_ecom',
+                ]);
+            } else {
+                SyncMapping::create([
+                    'entity_type'         => 'sales_order',
+                    'erp_id'              => (string) $this->erpOrderId,
+                    'erp_driver'          => $erp->driverName(),
+                    'ecom_id'             => $ecomOrderId,
+                    'ecom_driver'         => $ecom->driverName(),
+                    'ecom_handle'         => $erpOrder['name'] ?? null,
+                    'ecom_status'         => 'posted',
+                    'last_synced_at'      => now(),
+                    'last_sync_direction' => 'erp_to_ecom',
+                ]);
+            }
 
             $log->markSuccess(json_encode(['ecom_order_id' => $ecomOrderId]));
 

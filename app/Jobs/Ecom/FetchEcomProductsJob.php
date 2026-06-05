@@ -95,22 +95,18 @@ class FetchEcomProductsJob implements ShouldQueue, ShouldBeUnique
                 $updatedAt     = $ecomProduct['updated_at'] ?? null;
                 if (!$ecomId) continue;
 
-                // Skip if already pushed to ERP and unchanged
+                // Skip if already pushed to ERP — never re-queue as pending
                 $existing = \App\Models\SyncMapping::where('entity_type', 'product')
                     ->where('ecom_id', $ecomId)
                     ->first();
 
                 if ($existing) {
-                    // Already in Odoo (erp_id set) and not changed
+                    // Already in Odoo — skip entirely regardless of updated_at
                     if ($existing->erp_id && $existing->erp_id !== '0') {
-                        $prevMeta      = is_array($existing->metadata) ? $existing->metadata : json_decode($existing->metadata ?? '{}', true);
-                        $prevUpdatedAt = $prevMeta['updated_at'] ?? null;
-                        if ($prevUpdatedAt && $updatedAt && $prevUpdatedAt === $updatedAt) {
-                            $skipped++;
-                            continue;
-                        }
+                        $skipped++;
+                        continue;
                     }
-                    // Already pending and unchanged
+                    // Not in Odoo yet but pending and unchanged — skip
                     if ($existing->ecom_status === 'pending') {
                         $prevMeta      = is_array($existing->metadata) ? $existing->metadata : json_decode($existing->metadata ?? '{}', true);
                         $prevUpdatedAt = $prevMeta['updated_at'] ?? null;

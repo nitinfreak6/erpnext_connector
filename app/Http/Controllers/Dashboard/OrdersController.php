@@ -48,6 +48,25 @@ class OrdersController extends Controller
 
         $orders = $query->paginate($perPage)->withQueryString();
 
+        // Deduplicate: when both a 'sales_order' and an 'order' row exist for the same
+        // erp_id (created by the old SyncMapping::create bug), suppress the 'order' duplicate.
+        $seenErpIds = [];
+        $orders->getCollection()->transform(function ($mapping) use (&$seenErpIds) {
+            if ($mapping->erp_id) {
+                if (isset($seenErpIds[$mapping->erp_id])) {
+                    $mapping->_duplicate = true;
+                    return $mapping;
+                }
+                $seenErpIds[$mapping->erp_id] = true;
+            }
+            $mapping->_duplicate = false;
+            return $mapping;
+        });
+
+        $orders->setCollection(
+            $orders->getCollection()->filter(fn($m) => !$m->_duplicate)->values()
+        );
+
         $orders->getCollection()->transform(function ($mapping) {
             $mapping->latest_log = SyncLog::whereIn('entity_type', ['order', 'sales_order'])
                 ->where(function ($q) use ($mapping) {
@@ -401,6 +420,30 @@ class OrdersController extends Controller
             ->with('success', $pending->count() . " order(s) posted to " . $this->settings->erpDisplayName() . '.');
     }
 	
+	// ── Push single ERP order → Ecom (erp_to_ecom, called from Tools button) ──
+    public function push(int $erpId)
+    {
+        $mapping = SyncMapping::whereIn('entity_type', ['order', 'sales_order'])
+            ->where('erp_id', (string) $erpId)
+            ->first();
+
+        // Already pushed — has a Shopify order ID
+        if ($mapping && $mapping->ecom_id) {
+            return back()->with('info', "Order #{$erpId} already pushed to " . $this->settings->ecomDisplayName() . " (#{$mapping->ecom_id}).");
+        }
+
+        try {
+            \App\Jobs\Ecom\PushOrderToEcomJob::dispatchSync($erpId);
+            if ($mapping) {
+                $mapping->refresh();
+                $mapping->update(['ecom_status' => 'posted', 'last_synced_at' => now()]);
+            }
+            return back()->with('success', "Order #{$erpId} pushed to " . $this->settings->ecomDisplayName() . '.');
+        } catch (\Throwable $e) {
+            return back()->with('error', 'Push failed: ' . $e->getMessage());
+        }
+    }
+
 	// ── Post single order to ERP (manual) ────────────────────────────────
 
     // ── Post single order — direction-aware ─────────────────────────────

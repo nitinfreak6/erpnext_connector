@@ -542,11 +542,12 @@ class ProductsController extends Controller
                 ->first();
 
             if ($existing) {
+                // Already in Odoo — skip entirely, don't reset to pending
+                if ($existing->erp_id && $existing->erp_id !== '0') {
+                    return back()->with('info', "Product #{$ecomId} already synced to " . $this->settings->erpDisplayName() . " — no action needed.");
+                }
                 $prevMeta      = is_array($existing->metadata) ? $existing->metadata : json_decode($existing->metadata ?? '{}', true);
                 $prevUpdatedAt = $prevMeta['updated_at'] ?? null;
-                if ($prevUpdatedAt && $updatedAt && $prevUpdatedAt === $updatedAt && $existing->erp_id) {
-                    return back()->with('info', "Product #{$ecomId} already synced — no changes.");
-                }
                 if ($prevUpdatedAt && $updatedAt && $prevUpdatedAt === $updatedAt && $existing->ecom_status === 'pending') {
                     return back()->with('info', "Product #{$ecomId} already fetched and pending push.");
                 }
@@ -582,28 +583,35 @@ class ProductsController extends Controller
                 return back()->with('error', "No data for product #{$ecomId}. Run Fetch first.");
             }
 
-            // Skip if already in Odoo and unchanged
+            // Already in ERP — block re-push entirely
             if ($mapping->erp_id && $mapping->erp_id !== '0') {
-                $ecom    = app(\App\Services\Ecom\EcomInterface::class);
-                $current = $ecom->getProduct($ecomId);
-                $prevMeta      = is_array($mapping->metadata) ? $mapping->metadata : json_decode($mapping->metadata, true);
-                $prevUpdatedAt = $prevMeta['updated_at'] ?? null;
-                $newUpdatedAt  = $current['updated_at'] ?? null;
-                if ($prevUpdatedAt && $newUpdatedAt && $prevUpdatedAt === $newUpdatedAt) {
-                    return back()->with('info', "Product #{$ecomId} already in " . $this->settings->erpDisplayName() . " — no changes.");
-                }
+                return back()->with('info', "Product #{$ecomId} already in " . $this->settings->erpDisplayName() . " (ID: #{$mapping->erp_id}).");
             }
 
             $ecomProduct = is_array($mapping->metadata) ? $mapping->metadata : json_decode($mapping->metadata, true);
             $erp         = app(\App\Services\Erp\ErpInterface::class);
-            $erpId       = $erp->createProduct($ecomProduct);
+
+            $log = \App\Models\SyncLog::create([
+                'direction'       => \App\Models\SyncLog::DIRECTION_ECOM_TO_ERP,
+                'entity_type'     => 'product',
+                'entity_id'       => (string) $ecomId,
+                'action'          => 'create',
+                'status'          => \App\Models\SyncLog::STATUS_PROCESSING,
+                'request_payload' => json_encode($ecomProduct),
+            ]);
+
+            $erpId = $erp->createProduct($ecomProduct);
 
             if ($erpId) {
-                $mapping->update(['erp_id' => (string) $erpId, 'ecom_status' => 'posted', 'last_synced_at' => now()]);
+                $mapping->update(['erp_id' => (string) $erpId, 'ecom_status' => 'posted', 'last_synced_at' => now(), 'last_sync_direction' => 'ecom_to_erp']);
+                $log->markSuccess(json_encode(['erp_id' => $erpId]));
+            } else {
+                $log->markFailed('ERP createProduct returned no ID');
             }
 
             return back()->with('success', "Product #{$ecomId} pushed to " . $this->settings->erpDisplayName() . " (ID: #{$erpId}).");
         } catch (\Throwable $e) {
+            if (isset($log)) $log->markFailed($e->getMessage());
             return back()->with('error', 'Push failed: ' . $e->getMessage());
         }
     }

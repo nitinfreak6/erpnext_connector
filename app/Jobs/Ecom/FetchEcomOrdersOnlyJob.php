@@ -63,7 +63,7 @@ class FetchEcomOrdersOnlyJob implements ShouldQueue
                 $latestUpdatedAt = $updatedAt;
             }
 
-            // Skip if updated_at matches stored — order hasn't changed regardless of status
+            // Skip if updated_at matches stored — order unchanged
             $existing = SyncMapping::whereIn('entity_type', ['order', 'sales_order'])
                 ->where('ecom_id', $ecomId)
                 ->first();
@@ -72,6 +72,13 @@ class FetchEcomOrdersOnlyJob implements ShouldQueue
                 $prevMeta      = is_array($existing->metadata) ? $existing->metadata : json_decode($existing->metadata ?? '{}', true);
                 $prevUpdatedAt = $prevMeta['updated_at'] ?? null;
 
+                // Already in ERP — skip entirely regardless of updated_at
+                if ($existing->erp_id && $existing->erp_id !== '0') {
+                    $skipped++;
+                    continue;
+                }
+
+                // Not in ERP yet but unchanged — skip
                 if ($prevUpdatedAt && $updatedAt && $prevUpdatedAt === $updatedAt) {
                     $skipped++;
                     continue;

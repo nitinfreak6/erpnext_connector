@@ -79,9 +79,9 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
         Route::get('/inventory',                     [InventoryController::class, 'index'])           ->name('.inventory');
         Route::post('/inventory/fetch-stock',        [InventoryController::class, 'fetchStock'])      ->name('.inventory.fetch-stock');
         Route::post('/inventory/post-stock',         [InventoryController::class, 'postStock'])       ->name('.inventory.post-stock');
-        Route::post('/inventory/{erpId}/fetch-stock',[InventoryController::class, 'fetchStockSingle'])->name('.inventory.fetch-stock-single');
-        Route::post('/inventory/{erpId}/post-stock', [InventoryController::class, 'postStockSingle']) ->name('.inventory.post-stock-single');
-        Route::get('/inventory/{erpId}/stock-info',  [InventoryController::class, 'stockInfo'])       ->name('.inventory.stock-info');
+        Route::post('/inventory/{id}/fetch-stock',[InventoryController::class, 'fetchStockSingle'])->name('.inventory.fetch-stock-single');
+        Route::post('/inventory/{id}/post-stock', [InventoryController::class, 'postStockSingle']) ->name('.inventory.post-stock-single');
+        Route::get('/inventory/{id}/stock-info',  [InventoryController::class, 'stockInfo'])       ->name('.inventory.stock-info');
     });
 
     // ── Product Cache (no feature flag — always available) ───────────────

@@ -213,19 +213,19 @@
                             </button>
                             <div x-show="open" x-cloak
                                  class="absolute right-0 mt-1 w-36 bg-white border border-gray-100 rounded-lg shadow-lg z-20 py-1">
-                                <form method="POST" action="{{ route('dashboard.inventory.fetch-stock-single', $mapping->erp_id) }}">
+                                <form method="POST" action="{{ route('dashboard.inventory.fetch-stock-single', $mapping->erp_id ?? $mapping->ecom_id) }}">
                                     @csrf
                                     <button class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50">
                                         ↓ Fetch from {{ $syncMode === 'ecom_to_erp' ? $ecomDisplayName : $erpDisplayName }}
                                     </button>
                                 </form>
-                                <form method="POST" action="{{ route('dashboard.inventory.post-stock-single', $mapping->erp_id) }}">
+                                <form method="POST" action="{{ route('dashboard.inventory.post-stock-single', $mapping->erp_id ?? $mapping->ecom_id) }}">
                                     @csrf
                                     <button class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50">
                                         ↑ Post to {{ $syncMode === 'ecom_to_erp' ? $erpDisplayName : $ecomDisplayName }}
                                     </button>
                                 </form>
-                                <a href="{{ route('dashboard.inventory.stock-info', $mapping->erp_id) }}"
+                                <a href="{{ route('dashboard.inventory.stock-info', $mapping->erp_id ?? $mapping->ecom_id) }}"
                                    class="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50">ℹ Stock Info</a>
                             </div>
                         </div>

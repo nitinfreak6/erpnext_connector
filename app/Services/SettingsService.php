@@ -206,7 +206,9 @@ class SettingsService
 
     public function inventorySyncMode(): string
     {
-        return $this->get('inventory_sync_mode') ?: 'erp_to_ecom';
+        // Fall back to product sync mode — inventory direction always matches product direction.
+        // This means no separate DB setting is needed; changing product direction auto-applies to inventory.
+        return $this->get('inventory_sync_mode') ?: $this->productSyncMode();
     }
 
     public function dispatchSyncMode(): string

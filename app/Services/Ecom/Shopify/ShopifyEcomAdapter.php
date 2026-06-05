@@ -161,9 +161,9 @@ class ShopifyEcomAdapter implements EcomInterface
         $this->inventory->update($variantId, $quantity, $locationId);
     }
 
-    public function getInventoryLevels(array $variantIds): array
+    public function getInventoryLevels(array $inventoryItemIds, string $locationId): array
     {
-        return $this->inventory->getLevels($variantIds);
+        return $this->inventory->getLevels($inventoryItemIds, $locationId);
     }
 
     // ── Customers ─────────────────────────────────────────────────────────

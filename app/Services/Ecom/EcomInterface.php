@@ -33,7 +33,7 @@ interface EcomInterface
     // ── Inventory ─────────────────────────────────────────────────────────
 
     public function updateInventory(string|int $variantId, int $quantity, ?string $locationId = null): void;
-    public function getInventoryLevels(array $variantIds): array;
+    public function getInventoryLevels(array $inventoryItemIds, string $locationId): array;
 
     // ── Customers ─────────────────────────────────────────────────────────
 
