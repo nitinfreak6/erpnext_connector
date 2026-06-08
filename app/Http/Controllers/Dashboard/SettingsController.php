@@ -24,33 +24,27 @@ class SettingsController extends Controller
             ->get()
             ->groupBy('group');
 
-        // Section metadata — labels, icons, descriptions for each group
+        // Section metadata — built from the connector registry so every
+        // registered driver gets its settings section automatically.
+        // Only the static 'general' section is hardcoded.
+        $registry    = app(\App\Services\ConnectorRegistry::class);
         $sectionMeta = [
-            'general'  => [
+            'general' => [
                 'label'       => 'Common Settings',
                 'icon'        => '⚙️',
-                'description' => 'ERP driver selection and global sync feature flags',
+                'description' => 'ERP/Ecom driver selection and global sync feature flags',
                 'color'       => 'indigo',
             ],
-            'odoo'     => [
-                'label'       => 'Odoo Settings',
-                'icon'        => '🔗',
-                'description' => 'Odoo ERP connection credentials',
-                'color'       => 'purple',
-            ],
-            'shopify'  => [
-                'label'       => 'Shopify Settings',
-                'icon'        => '🛍️',
-                'description' => 'Shopify store credentials and sync behaviour',
-                'color'       => 'green',
-            ],
-            'amazon'   => [
-                'label'       => 'Amazon Settings',
-                'icon'        => '📦',
-                'description' => 'Amazon SP-API credentials and marketplace config',
-                'color'       => 'amber',
-            ],
         ];
+
+        foreach (array_merge($registry->erpDrivers(), $registry->ecomDrivers()) as $slug => $cfg) {
+            $sectionMeta[$slug] = [
+                'label'       => ($cfg['label'] ?? ucfirst($slug)) . ' Settings',
+                'icon'        => $cfg['icon'] ?? '🔌',
+                'description' => ($cfg['label'] ?? ucfirst($slug)) . ' connection credentials',
+                'color'       => $cfg['color'] ?? 'slate',
+            ];
+        }
 
         return view('dashboard.settings', compact('groups', 'sectionMeta'));
     }

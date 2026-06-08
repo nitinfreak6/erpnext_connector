@@ -178,12 +178,17 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
         Log::info('FetchErpProductsJob: manual re-push dispatched for ' . count($erpIds) . ' product(s).');
     }
 
-    // FIX #15: Push destination resolved from active ecom driver — not hardcoded.
-    // Add new ecom drivers by adding one entry to the $ecomJobMap array.
+    // Push destination resolved from the connector registry for the active
+    // ecom driver — see config/connectors.php. Amazon is a secondary channel.
     private function dispatchPushJobs(int $erpId, SettingsService $settings): void
     {
+        $registry = app(\App\Services\ConnectorRegistry::class);
+        $pushJob  = $registry->job($settings->ecomDriver(), 'push_product');
+
         // Generic job — works for any ecom driver via EcomInterface::syncProduct()
-        \App\Jobs\Ecom\PushProductToEcomJob::dispatch($erpId);
+        if ($pushJob) {
+            $pushJob::dispatch($erpId);
+        }
 
         // Amazon is a secondary channel — conditional on its own enable flag
         if ($settings->isAmazonChannelEnabled()) {

@@ -2,11 +2,9 @@
 
 namespace App\Providers;
 
+use App\Services\ConnectorRegistry;
 use App\Services\Ecom\EcomInterface;
-use App\Services\Ecom\Shopify\ShopifyEcomAdapter;
 use App\Services\Erp\ErpInterface;
-use App\Services\Erp\Odoo\OdooErpAdapter;
-use App\Services\Erp\Sap\SapErpAdapter;
 use App\Services\SettingsService;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
@@ -15,54 +13,51 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        // Driver maps now live in config/connectors.php and are read through
+        // ConnectorRegistry. To add an ERP/Ecom you edit that one config file —
+        // no change here. See config/connectors.php for the contract.
+        $this->app->singleton(ConnectorRegistry::class);
+
         // ── ERP driver binding ──────────────────────────────────────────
-        // Driver slug is read from connector_settings (DB) first, then .env fallback.
-        // To add a new ERP: add one 'driver_slug' => AdapterClass::class line below.
         $this->app->bind(ErpInterface::class, function ($app) {
+            $registry = $app->make(ConnectorRegistry::class);
+
             try {
                 $driver = $app->make(SettingsService::class)->erpDriver();
             } catch (\Throwable) {
-                $driver = config('sync.erp_driver', env('ERP_DRIVER', 'odoo'));
+                $driver = config('connectors.default_erp', env('ERP_DRIVER', 'odoo'));
             }
 
-            // FIX #24: SAP binding uncommented. Add new ERP adapters here as needed.
-            $map = [
-                'odoo' => OdooErpAdapter::class,
-                'sap'  => SapErpAdapter::class,
-                // 'netsuite' => \App\Services\Erp\NetSuite\NetSuiteErpAdapter::class,
-            ];
+            $adapter = $registry->adapterClass($driver);
 
-            if (!isset($map[$driver])) {
+            if (!$adapter) {
                 throw new \InvalidArgumentException(
-                    "ERP driver [{$driver}] is not registered. Add it to AppServiceProvider::\$erpMap."
+                    "ERP driver [{$driver}] is not registered. Add it to config/connectors.php."
                 );
             }
 
-            return $app->make($map[$driver]);
+            return $app->make($adapter);
         });
 
         // ── Ecom driver binding ─────────────────────────────────────────
-        // To add a new ecom platform: add one line to the map below.
         $this->app->bind(EcomInterface::class, function ($app) {
+            $registry = $app->make(ConnectorRegistry::class);
+
             try {
                 $driver = $app->make(SettingsService::class)->ecomDriver();
             } catch (\Throwable) {
-                $driver = config('sync.ecom_driver', env('ECOM_DRIVER', 'shopify'));
+                $driver = config('connectors.default_ecom', env('ECOM_DRIVER', 'shopify'));
             }
 
-            $map = [
-                'shopify'     => ShopifyEcomAdapter::class,
-                // 'woocommerce' => \App\Services\Ecom\WooCommerce\WooCommerceEcomAdapter::class,
-                // 'magento'     => \App\Services\Ecom\Magento\MagentoEcomAdapter::class,
-            ];
+            $adapter = $registry->adapterClass($driver);
 
-            if (!isset($map[$driver])) {
+            if (!$adapter) {
                 throw new \InvalidArgumentException(
-                    "Ecom driver [{$driver}] is not registered. Add it to AppServiceProvider::\$ecomMap."
+                    "Ecom driver [{$driver}] is not registered. Add it to config/connectors.php."
                 );
             }
 
-            return $app->make($map[$driver]);
+            return $app->make($adapter);
         });
     }
 

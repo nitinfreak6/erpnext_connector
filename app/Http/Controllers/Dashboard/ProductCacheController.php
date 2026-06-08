@@ -93,17 +93,12 @@ class ProductCacheController extends Controller
      */
     public function postEcom(Request $request): RedirectResponse
     {
-        $ecomDriver = $this->settings->ecomDriver();
-        $ecomJobMap = [
-            'shopify' => \App\Jobs\Ecom\PushProductToEcomJob::class,
-            // 'woocommerce' => \App\Jobs\WooCommerce\PushProductToWooCommerceJob::class,
-        ];
+        $ecomDriver   = $this->settings->ecomDriver();
+        $ecomJobClass = app(\App\Services\ConnectorRegistry::class)->job($ecomDriver, 'push_product');
 
-        if (!isset($ecomJobMap[$ecomDriver])) {
+        if (!$ecomJobClass) {
             return back()->with('error', "No push job registered for driver [{$ecomDriver}].");
         }
-
-        $ecomJobClass = $ecomJobMap[$ecomDriver];
 
         // FIX: use erp_id ?? odoo_id
         $ids = array_filter(array_map('intval', $request->input('ids', [])));

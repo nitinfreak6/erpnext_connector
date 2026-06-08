@@ -34,19 +34,14 @@ class SyncPushProductsCommand extends Command
         $onlyNew = $this->option('only-new');
         $dryRun  = $this->option('dry-run');
 
-        // Resolve active ecom push job from driver — no hardcoded Shopify
-        $ecomDriver = $settings->ecomDriver();
-        $ecomJobMap = [
-            'shopify'     => \App\Jobs\Ecom\PushProductToEcomJob::class,
-            // 'woocommerce' => \App\Jobs\WooCommerce\PushProductToWooCommerceJob::class,
-        ];
+        // Resolve active ecom push job from the connector registry — no hardcoded Shopify
+        $ecomDriver   = $settings->ecomDriver();
+        $ecomJobClass = app(\App\Services\ConnectorRegistry::class)->job($ecomDriver, 'push_product');
 
-        if (!isset($ecomJobMap[$ecomDriver])) {
+        if (!$ecomJobClass) {
             $this->error("No push job registered for ecom driver [{$ecomDriver}].");
             return self::FAILURE;
         }
-
-        $ecomJobClass   = $ecomJobMap[$ecomDriver];
         $amazonEnabled  = $settings->isAmazonChannelEnabled();
 
         // Build query — FIX: use ecom_status (generic column), fall back to shopify_status

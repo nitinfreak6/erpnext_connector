@@ -198,6 +198,24 @@ interface ErpInterface
      */
     public function normalizeOrder(array $raw): array;
 
+    // ── Field discovery (powers the field-config / mapping menus) ─────────
+
+    /**
+     * Return the list of fields this ERP exposes for the given entity type,
+     * so the dashboard mapping menus can populate their source dropdowns for
+     * ANY driver without driver-specific code in the controllers.
+     *
+     * Each element: ['key' => string, 'label' => string,
+     *                'type' => string (optional), 'scope' => 'header'|'line'].
+     *
+     * Implementations should catch their own discovery errors and return []
+     * rather than throwing, so a connection hiccup degrades the menu instead
+     * of breaking it.
+     *
+     * @return array<int, array{key:string,label:string,type?:string,scope:string}>
+     */
+    public function getAvailableFields(string $entityType): array;
+
     // ── Meta ─────────────────────────────────────────────────────────────
 
     /**

@@ -22,11 +22,14 @@ class InventoryController extends Controller
 		$channel = $request->input('channel', 'all');
 		$status  = $request->input('status');
 
-		$entityTypes = match($channel) {
-			'shopify' => ['inventory'],
-			'amazon'  => ['amazon_inventory'],
-			default   => ['inventory', 'amazon_inventory'],
-		};
+		$registry    = app(\App\Services\ConnectorRegistry::class);
+		$entityTypes = $channel === 'all'
+			? $registry->allEntityTypesForCategory('inventory')
+			: $registry->entityTypes($channel, 'inventory');
+
+		if (empty($entityTypes)) {
+			$entityTypes = $registry->allEntityTypesForCategory('inventory');
+		}
 
 		// ── PRIMARY SOURCE: SyncMapping (written by Fetch Stock) ──────────────
 		$logsQuery = SyncMapping::where('entity_type', 'inventory')

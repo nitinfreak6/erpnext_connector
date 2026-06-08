@@ -14,17 +14,18 @@ class OverviewController extends Controller
     public function index()
     {
         // ── Channel counts ────────────────────────────────────────
-        $stats = [
-            'shopify' => [
-                'products'  => SyncMapping::where('entity_type', 'product')->count(),
-                'orders'    => SyncMapping::where('entity_type', 'order')->count(),
-                'customers' => SyncMapping::where('entity_type', 'customer')->count(),
-            ],
-            'amazon' => [
-                'products' => SyncMapping::where('entity_type', 'amazon_product')->count(),
-                'orders'   => SyncMapping::where('entity_type', 'amazon_order')->count(),
-            ],
-        ];
+        // Built from the connector registry so a new channel appears here
+        // automatically — no hardcoded 'shopify' / 'amazon'.
+        $registry = app(\App\Services\ConnectorRegistry::class);
+        $stats    = [];
+
+        foreach ($registry->ecomDrivers() as $slug => $cfg) {
+            $stats[$slug] = [
+                'products'  => SyncMapping::whereIn('entity_type', $registry->entityTypes($slug, 'product'))->count(),
+                'orders'    => SyncMapping::whereIn('entity_type', $registry->entityTypes($slug, 'order'))->count(),
+                'customers' => SyncMapping::whereIn('entity_type', $registry->entityTypes($slug, 'customer'))->count(),
+            ];
+        }
 
         // ── Sync health (last 24h) ────────────────────────────────
         $since = now()->subDay();

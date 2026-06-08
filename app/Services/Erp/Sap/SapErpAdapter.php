@@ -236,4 +236,14 @@ class SapErpAdapter implements ErpInterface
     {
         return 'sap';
     }
+
+    /**
+     * Field discovery — returns [] until the SAP adapter is implemented.
+     * Returning [] (rather than throwing) lets the field-config menu render
+     * empty instead of erroring while the adapter is being built out.
+     */
+    public function getAvailableFields(string $entityType): array
+    {
+        return [];
+    }
 }

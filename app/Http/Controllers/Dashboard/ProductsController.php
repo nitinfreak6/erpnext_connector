@@ -170,14 +170,13 @@ class ProductsController extends Controller
             return back()->with($failed ? 'warning' : 'success', $msg);
         }
 
-        // ── Odoo → Shopify (erp_to_ecom or bidirectional) ────────────────
-        $ecomJobMap = ['shopify' => \App\Jobs\Ecom\PushProductToEcomJob::class];
+        // ── ERP → Ecom (erp_to_ecom or bidirectional) ───────────────────
+        $ecomJobClass = app(\App\Services\ConnectorRegistry::class)->job($ecomDriver, 'push_product');
 
-        if (!isset($ecomJobMap[$ecomDriver])) {
+        if (!$ecomJobClass) {
             return back()->with('error', "No push job registered for ecom driver [{$ecomDriver}].");
         }
 
-        $ecomJobClass  = $ecomJobMap[$ecomDriver];
         $amazonEnabled = $this->settings->isAmazonChannelEnabled();
 
         // Only push pending/failed — skip already sent with no changes
@@ -346,10 +345,10 @@ class ProductsController extends Controller
 
     public function postSingle(int $erpId)
     {
-        $ecomDriver = $this->settings->ecomDriver();
-        $ecomJobMap = ['shopify' => \App\Jobs\Ecom\PushProductToEcomJob::class];
+        $ecomDriver   = $this->settings->ecomDriver();
+        $ecomJobClass = app(\App\Services\ConnectorRegistry::class)->job($ecomDriver, 'push_product');
 
-        if (!isset($ecomJobMap[$ecomDriver])) {
+        if (!$ecomJobClass) {
             return back()->with('error', "No push job registered for driver [{$ecomDriver}].");
         }
 
@@ -373,7 +372,7 @@ class ProductsController extends Controller
             }
         }
 
-        $ecomJobMap[$ecomDriver]::dispatchSync($erpId);
+        $ecomJobClass::dispatchSync($erpId);
 
         return back()->with('success',
             "Product #{$erpId} pushed to " . $this->settings->ecomDisplayName() . '.'

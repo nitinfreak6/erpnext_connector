@@ -2,18 +2,24 @@
 
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\WebhookController;
-use App\Http\Middleware\VerifyShopifyWebhook;
+use App\Http\Middleware\VerifyEcomWebhook;
 use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
-| Shopify Webhook Routes
+| Ecommerce Webhook Routes
 |--------------------------------------------------------------------------
-| HMAC signature is verified in VerifyShopifyWebhook middleware.
+| Signature is verified in VerifyEcomWebhook, which delegates to the active
+| ecom driver's adapter (EcomInterface::verifyWebhook). The {driver} prefix
+| keeps the URL namespaced per platform.
 | Always return 200 fast — heavy work is dispatched to the queue.
+|
+| NOTE: WebhookController still dispatches Shopify-shaped inbound jobs
+| (ProcessShopify*Job) and reads X-Shopify-* headers. Generalising the
+| inbound handler/jobs per driver is the remaining step — see notes.
 */
-Route::prefix('webhooks/shopify')
-    ->middleware(VerifyShopifyWebhook::class)
+Route::prefix('webhooks/{driver}')
+    ->middleware(VerifyEcomWebhook::class)
     ->group(function () {
         Route::post('orders/create',           [WebhookController::class, 'ordersCreate']);
         Route::post('orders/updated',          [WebhookController::class, 'ordersUpdated']);

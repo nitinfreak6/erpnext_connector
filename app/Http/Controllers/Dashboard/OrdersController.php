@@ -29,11 +29,14 @@ class OrdersController extends Controller
         $channel = $request->input('channel', 'all');
         $perPage = (int) $request->input('per_page', 25);
 
-        $entityTypes = match ($channel) {
-            'shopify' => ['order', 'sales_order'],
-            'amazon'  => ['amazon_order'],
-            default   => ['order', 'sales_order', 'amazon_order'],
-        };
+        $registry    = app(\App\Services\ConnectorRegistry::class);
+        $entityTypes = $channel === 'all'
+            ? $registry->allEntityTypesForCategory('order')
+            : $registry->entityTypes($channel, 'order');
+
+        if (empty($entityTypes)) {
+            $entityTypes = $registry->allEntityTypesForCategory('order');
+        }
 
         $query = SyncMapping::whereIn('entity_type', $entityTypes)
             ->orderByDesc('last_synced_at');

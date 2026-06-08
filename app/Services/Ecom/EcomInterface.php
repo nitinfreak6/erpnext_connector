@@ -52,4 +52,18 @@ interface EcomInterface
 
     public function createFulfillment(string|int $orderId, array $fulfillmentData): array;
     public function updateFulfillment(string|int $fulfillmentId, array $updates): void;
+
+    // ── Field discovery (powers the field-config / mapping menus) ─────────
+
+    /**
+     * Return the list of fields this ecom platform exposes for the given
+     * entity type, so the dashboard mapping menus can populate their target
+     * dropdowns for ANY driver without driver-specific code in the controllers.
+     *
+     * Each element: ['key' => string, 'label' => string,
+     *                'scope' => 'header'|'line'|'template'|'variant'].
+     *
+     * @return array<int, array{key:string,label:string,scope:string}>
+     */
+    public function getAvailableFields(string $entityType): array;
 }

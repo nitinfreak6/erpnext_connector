@@ -315,13 +315,7 @@
                             {{ $ecomLabel }} → {{ $erpLabel }}
                         </button>
 
-                        {{-- Option 3: Both / Bidirectional --}}
-                        <button type="button"
-                                :class="mode==='bidirectional' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='bidirectional'">
-                            <span class="smode-arrow">⇄</span>
-                            Both
-                        </button>
+                       
                     </div>
 
                     {{-- Live flow diagram --}}
@@ -436,12 +430,7 @@
                             <span class="smode-arrow">→</span>
                             {{ $ecomLabel }} → {{ $erpLabel }}
                         </button>
-                        <button type="button"
-                                :class="mode==='bidirectional' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='bidirectional'">
-                            <span class="smode-arrow">⇄</span>
-                            Both
-                        </button>
+                       
                     </div>
 
                     <div class="flow-diagram" x-show="mode==='erp_to_ecom'">
@@ -510,12 +499,7 @@
                             <span class="smode-arrow">→</span>
                             {{ $ecomLabel }} → {{ $erpLabel }}
                         </button>
-                        <button type="button"
-                                :class="mode==='bidirectional' ? 'smode-btn active' : 'smode-btn'"
-                                @click="mode='bidirectional'">
-                            <span class="smode-arrow">⇄</span>
-                            Both
-                        </button>
+                        
                     </div>
 
                     <div class="flow-diagram" x-show="mode==='erp_to_ecom'">

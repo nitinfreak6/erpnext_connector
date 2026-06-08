@@ -515,6 +515,89 @@ class OdooErpAdapter implements ErpInterface
         return 'odoo';
     }
 
+    // ── Field discovery ───────────────────────────────────────────────────
+
+    /**
+     * Enumerate Odoo model fields via the native fields_get RPC, for both the
+     * header model and (where applicable) the child line model. Moved here from
+     * the dashboard controllers so the field-config menus stay driver-neutral.
+     */
+    public function getAvailableFields(string $entityType): array
+    {
+        $fields = [];
+
+        try {
+            $odoo        = app(\App\Services\Odoo\OdooService::class);
+            $headerModel = $this->odooModelForEntity($entityType);
+            $lineModel   = $this->odooLineModelForEntity($entityType);
+
+            // Header-scope fields
+            $rawHeader = $odoo->executeKw($headerModel, 'fields_get', [], ['attributes' => ['string', 'type']]);
+            foreach ($rawHeader as $key => $info) {
+                $fields[] = [
+                    'key'   => $key,
+                    'label' => $info['string'] ?? $key,
+                    'type'  => $info['type']   ?? 'char',
+                    'scope' => 'header',
+                ];
+            }
+
+            // Line-scope fields (entities with a child line model)
+            if ($lineModel) {
+                $rawLine = $odoo->executeKw($lineModel, 'fields_get', [], ['attributes' => ['string', 'type']]);
+                foreach ($rawLine as $key => $info) {
+                    $fields[] = [
+                        'key'   => $key,
+                        'label' => $info['string'] ?? $key,
+                        'type'  => $info['type']   ?? 'char',
+                        'scope' => 'line',
+                    ];
+                }
+            }
+
+            usort($fields, fn($a, $b) => strcmp($a['label'], $b['label']));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning(
+                "OdooErpAdapter::getAvailableFields({$entityType}) failed: " . $e->getMessage()
+            );
+            return [];
+        }
+
+        return $fields;
+    }
+
+    // Map entity type → Odoo header model name.
+    private function odooModelForEntity(string $entityType): string
+    {
+        return match ($entityType) {
+            'product'                   => 'product.template',
+            'customer'                  => 'res.partner',
+            'sales_order'               => 'sale.order',
+            'dispatch'                  => 'stock.picking',
+            'sales_credit'              => 'account.move',
+            'sales_credit_confirmation' => 'account.move',
+            'blind_return'              => 'stock.picking',
+            'purchase_order'            => 'purchase.order',
+            'receipt_order'             => 'stock.picking',
+            'inventory'                 => 'stock.quant',
+            'inventory_adjustment'      => 'stock.inventory',
+            default                     => 'product.template',
+        };
+    }
+
+    // Map entity type → Odoo child line model (null when the entity has no lines).
+    private function odooLineModelForEntity(string $entityType): ?string
+    {
+        return match ($entityType) {
+            'sales_order'    => 'sale.order.line',
+            'purchase_order' => 'purchase.order.line',
+            'dispatch'       => 'stock.move',
+            'blind_return'   => 'stock.move',
+            'receipt_order'  => 'stock.move',
+            default          => null,
+        };
+    }
+
     /**
      * Find existing Odoo partner by email, or create a new one.
      * This is the only Odoo-specific logic in order creation.

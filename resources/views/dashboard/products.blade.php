@@ -212,9 +212,14 @@
         <button type="submit"
                 onclick="return confirm('Push ALL products to {{ $ecomDisplayName }}?')"
                 class="inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4 4m0 0l4-4m-4 4V4"/>
-            </svg>
+				<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M16 12l-4 4m0 0l-4-4m4 4V4"
+					/>
+				</svg>
             Push to {{ $ecomDisplayName }}
         </button>
     </form>
@@ -325,16 +330,7 @@
                                     ? ($product->ecom_id ?? $product->erp_id ?? null)
                                     : ($product->odoo_id ?? $product->erp_id ?? $product->ecom_id ?? null);
                             @endphp
-                            @if($showId)
-                            <a href="{{ route('dashboard.products.show', $showId) }}" 
-                               class="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 hover:border-indigo-400 bg-white hover:bg-indigo-50 px-2 py-1 rounded-lg transition">
-                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                                </svg>
-                                Info
-                            </a>
-                            @endif
+                            
 
                             {{-- Tools Dropdown — always visible, direction-aware --}}
                             <div class="relative" x-data="{ open: false }">
@@ -345,25 +341,40 @@
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                                     </svg>
                                 </button>
+								
+								
 
                                 <div x-show="open" x-cloak @click.outside="open = false"
                                      class="absolute right-0 z-30 mt-1 w-56 bg-white border border-gray-200 rounded-xl shadow-xl py-1.5">
+									 
+									 @if($showId)
+									   <div>
+										<a href="{{ route('dashboard.products.show', $showId) }}" 
+										   class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition">
+											<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+											</svg>
+											Product Info
+										</a>
+										</div>
+										@endif
 
                                     @if($syncMode === 'erp_to_ecom' || $syncMode === 'bidirectional')
                                     {{-- ERP → Ecom: Fetch from Odoo + Push to Shopify --}}
-                                    <div class="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">{{ $erpDisplayName }}</div>
-                                    <form method="POST" action="{{ route('dashboard.products.fetch-single', $product->erp_id ?? $product->odoo_id) }}">
-                                        @csrf
-                                        <button type="submit" class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 transition">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                                            Fetch from {{ $erpDisplayName }}
-                                        </button>
-                                    </form>
+                                    
                                     <div class="border-t border-gray-100 my-1"></div>
                                     <form method="POST" action="{{ route('dashboard.products.post-single', $product->erp_id ?? $product->odoo_id) }}">
                                         @csrf
                                         <button type="submit" class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4 4m0 0l4-4m-4 4V4"/></svg>
+                                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width="2"
+													d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M16 12l-4 4m0 0l-4-4m4 4V4"
+												/>
+											</svg>
                                             Push to {{ $ecomDisplayName }}
                                         </button>
                                     </form>
@@ -375,37 +386,25 @@
                                     <div class="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">{{ $ecomDisplayName }}</div>
                                     @php $ecomProductId = $product->ecom_id ?? $product->ecom_product_id ?? null; @endphp
                                     @if($ecomProductId)
-                                    <form method="POST" action="{{ route('dashboard.products.pull-single', $ecomProductId) }}">
-                                        @csrf
-                                        <button type="submit" class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 transition">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                                            Fetch from {{ $ecomDisplayName }}
-                                        </button>
-                                    </form>
+                                   
                                     <div class="border-t border-gray-100 my-1"></div>
                                     <form method="POST" action="{{ route('dashboard.products.push-single-to-erp', $ecomProductId) }}">
                                         @csrf
                                         <button type="submit" class="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4 4m0 0l4-4m-4 4V4"/></svg>
+                                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width="2"
+													d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M16 12l-4 4m0 0l-4-4m4 4V4"
+												/>
+											</svg>
                                             Push to {{ $erpDisplayName }}
                                         </button>
                                     </form>
                                     @endif
                                     @endif
-
-                                    {{-- View on Shopify --}}
-                                    @php $viewId = $product->ecom_product_id ?? $product->ecom_id ?? null; @endphp
-                                    @if($viewId)
-                                    <div class="border-t border-gray-100 my-1"></div>
-                                    <a href="https://admin.shopify.com/store/{{ str_replace('.myshopify.com', '', $shopifyStore) }}/products/{{ $viewId }}"
-                                       target="_blank"
-                                       class="w-full text-left px-4 py-2 text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 flex items-center gap-2 transition">
-                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-                                        View on {{ $ecomDisplayName }} ↗
-                                    </a>
-                                    @endif
-
-                                </div>
+								</div>
                             </div>
                         </div>
                     </td>

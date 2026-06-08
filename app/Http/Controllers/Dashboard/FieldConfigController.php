@@ -150,10 +150,15 @@ class FieldConfigController extends Controller
             );
         }
 
+        // Driver-neutral field discovery — each ecom adapter reports its own
+        // fields via EcomInterface::getAvailableFields(). Grouped by scope so
+        // the persisted JSON shape (template/variant/fields) is unchanged.
+        $all  = app(EcomInterface::class)->getAvailableFields($entityType);
         $data = [
             'fetched_at'      => now()->toISOString(),
-            'template_fields' => $this->defaultEcomFields($ecomDriver, $entityType, 'header'),
-            'variant_fields'  => $this->defaultEcomFields($ecomDriver, $entityType, 'line'),
+            'fields'          => $all,
+            'template_fields' => array_values(array_filter($all, fn($f) => ($f['scope'] ?? '') === 'template')),
+            'variant_fields'  => array_values(array_filter($all, fn($f) => ($f['scope'] ?? '') === 'variant')),
         ];
 
         Storage::disk(self::FIELDS_DISK)->put(
@@ -180,26 +185,10 @@ class FieldConfigController extends Controller
             );
         }
 
-        if ($erpDriver === 'odoo') {
-            try {
-                $odoo    = app(\App\Services\Odoo\OdooService::class);
-                $model   = $this->odooModelForEntity($entityType);
-                $rawFields = $odoo->executeKw($model, 'fields_get', [], ['attributes' => ['string', 'type']]);
-
-                foreach ($rawFields as $key => $info) {
-                    $fields[] = [
-                        'key'   => $key,
-                        'label' => $info['string'] ?? $key,
-                        'type'  => $info['type']   ?? 'char',
-                        'scope' => 'header',
-                    ];
-                }
-
-                usort($fields, fn($a, $b) => strcmp($a['label'], $b['label']));
-            } catch (\Throwable $e) {
-                Log::warning("fetchErpFields: Odoo field introspection failed for {$entityType}: " . $e->getMessage());
-            }
-        }
+        // Driver-neutral field discovery — the active ERP adapter reports its
+        // own fields via ErpInterface::getAvailableFields() (Odoo introspects
+        // via fields_get; other adapters return their own catalog).
+        $fields = app(ErpInterface::class)->getAvailableFields($entityType);
 
         $data = ['fetched_at' => now()->toISOString(), 'fields' => $fields];
 
@@ -248,37 +237,5 @@ class FieldConfigController extends Controller
         if (!Storage::disk(self::FIELDS_DISK)->exists($path)) return null;
         $data = json_decode(Storage::disk(self::FIELDS_DISK)->get($path), true);
         return $data['fetched_at'] ?? null;
-    }
-
-    // Map entity type to Odoo model name
-    private function odooModelForEntity(string $entityType): string
-    {
-        return match ($entityType) {
-            'product'                   => 'product.template',
-            'customer'                  => 'res.partner',
-            'sales_order'               => 'sale.order',
-            'dispatch'                  => 'stock.picking',
-            'sales_credit'              => 'account.move',
-            'sales_credit_confirmation' => 'account.move',
-            'blind_return'              => 'stock.picking',
-            'purchase_order'            => 'purchase.order',
-            'receipt_order'             => 'stock.picking',
-            'inventory'                 => 'stock.quant',
-            'inventory_adjustment'      => 'stock.inventory',
-            default                     => 'product.template',
-        };
-    }
-
-    // Default ecom field list per entity type and scope
-    private function defaultEcomFields(string $driver, string $entityType, string $scope): array
-    {
-        // Products have special Shopify fields defined elsewhere
-        if ($entityType === 'product' && $driver === 'shopify') {
-            return []; // handled by fetchEcomFields in ProductFieldConfigController
-        }
-
-        // For other entities return empty — user adds fields manually
-        // or fetches from ecom API when that endpoint is available
-        return [];
     }
 }
