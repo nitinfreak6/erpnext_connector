@@ -3,93 +3,44 @@
 namespace App\Services\Shopify;
 
 use App\Exceptions\ShopifyApiException;
-use App\Models\ProductFieldConfig;
-use Illuminate\Support\Facades\Cache;
+use App\Services\Config\NestedFieldResolver;
+use App\Services\FieldMappingService;
+use App\Services\SettingsService;
+use GuzzleHttp\Client;
 use Illuminate\Support\Facades\Log;
 
 /**
  * ShopifyProductService
  *
- * ══════════════════════════════════════════════════════════════════════
- * DESIGN PRINCIPLE — config-driven, nothing hardcoded
- * ══════════════════════════════════════════════════════════════════════
+ * Config-driven product push: field configs use GraphQL paths like product.vendor,
+ * product.metafields.0.key, media.0.originalSource — not hardcoded mutation shapes.
  *
- * The shopify_field column in product_field_configs IS the GraphQL key.
- * This service reads those keys and routes/nests values purely by
- * key-pattern rules:
- *
- *   Key pattern                     │ Routed to
- *   ────────────────────────────────┼───────────────────────────────────
- *   'images'                        │ $media param (CreateMediaInput[])
- *   'status'                        │ ProductInput.status (uppercased)
- *   'tags'                          │ ProductInput.tags (string → array)
- *   dot-notation e.g. 'a.b.c'       │ deeply nested via dot-set
- *   option1 / option2 / option3     │ variant optionValues[]
- *   'inventoryPolicy'               │ variant top-level (uppercased enum)
- *   'taxable','requiresShipping'… . │ variant top-level (bool cast)
- *   'price','compareAtPrice'        │ variant top-level (2dp string)
- *   anything else                   │ passthrough as-is
- *
- * Adding a new Shopify field in the dashboard → works immediately.
- * Disabling a field config row → that field is omitted from the payload.
- * Deleting a row → field never sent to Shopify.
- *
- * This service is ERP-agnostic: it only cares about shopify_field keys
- * and the values resolved by resolveValue(). Swapping the ERP means
- * only the Odoo-side resolver changes, not this service.
- *
- * ══════════════════════════════════════════════════════════════════════
- * Routing reference (derived from key name — no lookup table)
- * ══════════════════════════════════════════════════════════════════════
- *
- * Template scope ProductInput keys:
- *   title, descriptionHtml, vendor, productType, tags, status,
- *   handle, templateSuffix, images
- *   → any future key added in the dashboard is passed through as-is
- *
- * Variant scope keys and their nesting:
- *   price, compareAtPrice           → variant (formatted to 2dp string)
- *   taxable                         → variant (bool)
- *   inventoryPolicy                 → variant (uppercased enum: DENY/CONTINUE)
- *   option1/2/3                     → variant.optionValues[]
- *   inventoryItem.*                 → variant.inventoryItem (nested)
- *     .sku                          → inventoryItem.sku
- *     .barcode                      → inventoryItem.barcode
- *     .tracked                      → inventoryItem.tracked (bool)
- *     .requiresShipping             → inventoryItem.requiresShipping (bool)
- *     .measurement.weight.value     → inventoryItem.measurement.weight.value
- *     .measurement.weight.unit      → inventoryItem.measurement.weight.unit (enum)
- *   any other dot key               → nested via dot-set
- *   anything else                   → passthrough
+ * Shopify API glue (not field mapping):
+ *   - STRUCTURAL keys: variants, options, images orchestration
+ *   - productOptionsCreate before variant optionValues
+ *   - resolveVariantOptionIds (optionId lookup — paths from field config)
+ *   - pruneEmptyNestedArrays (Shopify rejects empty nested objects)
+ *   - pruneEmptyMeasurement (omit incomplete weight; default unit when value > 0)
  */
 class ShopifyProductService
 {
-    // Structural keys never sent as simple k→v pairs to ProductInput
+    /** Internal keys — variant/options sync, not GraphQL mutation variables */
     private const STRUCTURAL = ['images', 'variants', 'options'];
 
-    // Variant keys that stay at top level (not nested under inventoryItem)
-    private const VARIANT_TOP_LEVEL = ['price', 'compareAtPrice', 'taxable', 'inventoryPolicy'];
+    /** Top-level GraphQL mutation argument names (from field config paths) */
+    private const MUTATION_ROOTS = ['product', 'media'];
 
-    // Weight unit → GraphQL enum
-    private const WEIGHT_UNITS = [
-        'kg' => 'KILOGRAMS', 'g'  => 'GRAMS', 'lb' => 'POUNDS', 'oz' => 'OUNCES',
-        'KILOGRAMS' => 'KILOGRAMS', 'GRAMS' => 'GRAMS', 'POUNDS' => 'POUNDS', 'OUNCES' => 'OUNCES',
-    ];
-
-    // Inventory policy → GraphQL enum
-    private const INVENTORY_POLICIES = [
-        'deny' => 'DENY', 'continue' => 'CONTINUE', 'DENY' => 'DENY', 'CONTINUE' => 'CONTINUE',
-    ];
+    /** ProductVariantsBulkInput keys set by sync orchestration (not erp field configs) */
+    private const VARIANT_BULK_STRUCTURAL = ['id', 'optionValues', 'inventoryQuantities'];
 	
-	private const INVENTORY_SCHEMA = [
-		'sku',
-		'tracked',
-		'requiresShipping',
-		'measurement.weight.value',
-		'measurement.weight.unit',
-	];
+	private array $wireLog = [];
 
-    public function __construct(private readonly ShopifyGraphQLService $graphql) {}
+    public function __construct(
+        private readonly ShopifyGraphQLService $graphql,
+        private readonly FieldMappingService $fieldMapping,
+        private readonly NestedFieldResolver $fields,
+        private readonly SettingsService $settings,
+    ) {}
 
     // ══════════════════════════════════════════════════════════════════════
     // LIST / FETCH PRODUCTS
@@ -173,7 +124,7 @@ class ShopifyProductService
                 }
             }
 
-            $pageInfo = $response['data']['products']['pageInfo'] ?? [];
+            $pageInfo = $response['products']['pageInfo'] ?? [];
             $hasNextPage = $pageInfo['hasNextPage'] ?? false;
             $cursor = $pageInfo['endCursor'] ?? null;
         }
@@ -181,50 +132,24 @@ class ShopifyProductService
         return $products;
     }
 
+    private function productFragment(): string
+    {
+        return $this->fieldMapping->buildShopifyProductGraphqlFragment(
+            $this->settings->ecomDriver(),
+            $this->settings->erpDriver(),
+        );
+    }
+
     private function getProductsQueryNoFilter(): string
     {
-        return <<<'GRAPHQL'
-        query($first: Int!, $after: String) {
-          products(first: $first, after: $after) {
+        $fragment = $this->productFragment();
+
+        return <<<GRAPHQL
+        query(\$first: Int!, \$after: String) {
+          products(first: \$first, after: \$after) {
             edges {
               node {
-                id
-                title
-                descriptionHtml
-                handle
-                status
-                vendor
-                productType
-                tags
-                createdAt
-                updatedAt
-                variants(first: 100) {
-                  edges {
-                    node {
-                      id
-                      title
-                      sku
-                      barcode
-                      price
-                      compareAtPrice
-                      inventoryQuantity
-                      taxable
-                      inventoryPolicy
-                      inventoryItem {
-                        id
-                      }
-                    }
-                  }
-                }
-                images(first: 10) {
-                  edges {
-                    node {
-                      id
-                      url
-                      altText
-                    }
-                  }
-                }
+                ...ProductFields
               }
             }
             pageInfo {
@@ -233,53 +158,20 @@ class ShopifyProductService
             }
           }
         }
+        {$fragment}
         GRAPHQL;
     }
 
     private function getProductsQueryWithFilter(): string
     {
-        return <<<'GRAPHQL'
-        query($first: Int!, $query: String!, $after: String) {
-          products(first: $first, query: $query, after: $after) {
+        $fragment = $this->productFragment();
+
+        return <<<GRAPHQL
+        query(\$first: Int!, \$query: String!, \$after: String) {
+          products(first: \$first, query: \$query, after: \$after) {
             edges {
               node {
-                id
-                title
-                descriptionHtml
-                handle
-                status
-                vendor
-                productType
-                tags
-                createdAt
-                updatedAt
-                variants(first: 100) {
-                  edges {
-                    node {
-                      id
-                      title
-                      sku
-                      barcode
-                      price
-                      compareAtPrice
-                      inventoryQuantity
-                      taxable
-                      inventoryPolicy
-                      inventoryItem {
-                        id
-                      }
-                    }
-                  }
-                }
-                images(first: 10) {
-                  edges {
-                    node {
-                      id
-                      url
-                      altText
-                    }
-                  }
-                }
+                ...ProductFields
               }
             }
             pageInfo {
@@ -288,6 +180,7 @@ class ShopifyProductService
             }
           }
         }
+        {$fragment}
         GRAPHQL;
     }
 
@@ -305,13 +198,19 @@ class ShopifyProductService
     // Public API  (same signatures as old REST service — callers unchanged)
     // ─────────────────────────────────────────────────────────────────────
 
+    /** @var array<string, mixed> Product payload for the current create/update call. */
+    private array $activeProductPayload = [];
+
     public function create(array $productData): array
     {
-        [$input, $media] = $this->toGraphQLInput($productData);
+        $this->activeProductPayload = $productData;
+        $variables = $this->buildGraphQLVariables($productData);
 
-        $data   = $this->graphql->query($this->productMutation('productCreate'), [
-            'input' => $input, 'media' => $media ?: null,
-        ]);
+		$query = $this->productCreateMutation();
+		$this->recordWire('productCreate', $query, $variables);
+		$data   = $this->graphql->query($query, $variables);
+		$this->recordResponse($data['productCreate'] ?? $data);
+
         $errors = $this->graphql->extractUserErrors($data, 'productCreate');
 
         if (!empty($errors)) {
@@ -321,7 +220,7 @@ class ShopifyProductService
 		$product = $data['productCreate']['product'];
 		$productId = $this->fromGid($product['id']);
 
-		$this->syncVariants($product['id'], $productData['variants'] ?? []);
+		$this->syncVariants($product['id'], $productData['variants'] ?? [], $productData['options'] ?? []);
 
 		return $this->normalizeProduct($product);
 
@@ -330,12 +229,20 @@ class ShopifyProductService
 
     public function update(string $shopifyProductId, array $productData): array
     {
-        [$input, $media] = $this->toGraphQLInput($productData);
-        $input['id']     = $this->toGid('Product', $shopifyProductId);
+        $this->activeProductPayload = $productData;
+        // productUpdate rejects productOptions — options are synced via productOptionsCreate in syncVariants()
+        $variables = $this->buildGraphQLVariables(
+            $productData,
+            includeProductOptions: false,
+            productGid: $shopifyProductId
+        );
 
-        $data   = $this->graphql->query($this->productMutation('productUpdate'), [
-            'input' => $input, 'media' => $media ?: null,
-        ]);
+		$query = $this->productUpdateMutation();
+		$this->recordWire('productUpdate', $query, $variables);
+
+		$data = $this->graphql->query($query, $variables);
+		$this->recordResponse($data['productUpdate'] ?? $data);
+
         $errors = $this->graphql->extractUserErrors($data, 'productUpdate');
 
         if (!empty($errors)) {
@@ -351,7 +258,7 @@ class ShopifyProductService
 		
 		$product = $data['productUpdate']['product'];
 
-		$this->syncVariants($product['id'], $productData['variants'] ?? []);
+		$this->syncVariants($product['id'], $productData['variants'] ?? [], $productData['options'] ?? []);
 
 		return $this->normalizeProduct($product);
 
@@ -360,14 +267,19 @@ class ShopifyProductService
 	
 	private function getExistingVariants(string $productGid): array
 	{
-		$query = <<<GQL
-		query(\$id: ID!) {
-		  product(id: \$id) {
-			variants(first: 10) {
-			  edges {
-				node { id title }
-			  }
-			}
+		$query = <<<'GQL'
+		query($id: ID!) {
+		  product(id: $id) {
+		    variants(first: 100) {
+		      edges {
+		        node {
+		          id
+		          title
+		          sku
+		          selectedOptions { name value }
+		        }
+		      }
+		    }
 		  }
 		}
 		GQL;
@@ -379,62 +291,190 @@ class ShopifyProductService
 			$data['product']['variants']['edges'] ?? []
 		);
 	}
-	
+
+	/** @return array<int, string> */
+	private function variantPayloadMatchKeys(array $payload): array
+	{
+		$keys = [];
+
+		$optionValues = [];
+		foreach ($payload['optionValues'] ?? [] as $i => $ov) {
+			if (!is_array($ov) || empty($ov['name'])) {
+				continue;
+			}
+			$optionValues[$i] = strtolower(trim((string) $ov['name']));
+		}
+		if ($optionValues !== []) {
+			ksort($optionValues);
+			$keys[] = 'opt:' . implode('|', $optionValues);
+		}
+
+		$skuPath = $this->fieldMapping->productVariantSkuWritePath();
+		if ($skuPath !== null) {
+			$sku = $this->fields->get($payload, $skuPath);
+			if ($sku !== null && $sku !== '') {
+				$keys[] = 'sku:' . strtolower(trim((string) $sku));
+			}
+		}
+
+		if (!empty($payload['title'])) {
+			$keys[] = 'title:' . strtolower(trim((string) $payload['title']));
+		}
+
+		return array_values(array_unique($keys));
+	}
+
+	/** @return array<int, string> */
+	private function existingVariantMatchKeys(array $variant): array
+	{
+		$keys = [];
+
+		$optionValues = [];
+		foreach ($variant['selectedOptions'] ?? [] as $option) {
+			$name = trim((string) ($option['name'] ?? ''));
+			$value = trim((string) ($option['value'] ?? ''));
+			if ($name === '' || $value === '' || strcasecmp($name, 'Title') === 0) {
+				continue;
+			}
+			$optionValues[] = strtolower($value);
+		}
+		if ($optionValues !== []) {
+			$keys[] = 'opt:' . implode('|', $optionValues);
+		}
+
+		if (!empty($variant['sku'])) {
+			$keys[] = 'sku:' . strtolower(trim((string) $variant['sku']));
+		}
+
+		$title = trim((string) ($variant['title'] ?? ''));
+		if ($title !== '' && strcasecmp($title, 'Default Title') !== 0) {
+			$keys[] = 'title:' . strtolower($title);
+		}
+
+		return array_values(array_unique($keys));
+	}
+
+	/**
+	 * @param array<string, array{id: string, title?: string, sku?: string, selectedOptions?: array}> $existingByKey
+	 */
+	private function findExistingVariant(array $existingByKey, array $payload): ?array
+	{
+		foreach ($this->variantPayloadMatchKeys($payload) as $key) {
+			if (isset($existingByKey[$key])) {
+				return $existingByKey[$key];
+			}
+		}
+
+		return null;
+	}
+
 	private function replaceDefaultVariant(string $productGid, string $variantGid, array $payload): void
 	{
-		$mutation = <<<GQL
-		mutation(\$productId: ID!, \$variants: [ProductVariantsBulkInput!]!) {
-		  productVariantsBulkUpdate(
-			productId: \$productId,
-			variants: \$variants
-		  ) {
-			userErrors { field message }
+		$this->bulkUpdateVariants($productGid, [['gid' => $variantGid, 'payload' => $payload]]);
+	}
+
+	/**
+	 * @param array<int, array{gid: string, payload: array<string, mixed>}> $items
+	 */
+	private function bulkUpdateVariants(string $productGid, array $items): void
+	{
+		if ($items === []) {
+			return;
+		}
+
+		$mutation = <<<'GQL'
+		mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+		  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+		    productVariants { id }
+		    userErrors { field message }
 		  }
 		}
 		GQL;
 
-		$input = $this->toGraphQLVariantInput($payload);
-		$input['id'] = $variantGid;
+		$inputs         = [];
+		$inventoryByGid = [];
 
-		$this->graphql->query($mutation, [
+        foreach ($items as $item) {
+            $inventoryQty = $this->resolveVariantInventoryQuantities($item['payload']);
+            $input        = $this->toGraphQLVariantInput($item['payload']);
+            $input['id']  = $item['gid'];
+            $this->resolveVariantOptionIds($productGid, $input);
+            $this->extractInventoryQuantitiesFromVariantInput($input);
+            $inputs[] = $input;
+
+            if ($inventoryQty !== null) {
+                $inventoryByGid[$item['gid']] = $inventoryQty;
+            }
+        }
+
+		$this->recordWire('productVariantsBulkUpdate', $mutation, ['productId' => $productGid, 'variants' => $inputs]);
+
+		$data = $this->graphql->query($mutation, [
 			'productId' => $productGid,
-			'variants'  => [$input],
+			'variants'  => $inputs,
 		]);
-	}
-	
-	private function syncVariants(string $productGid, array $variants): void
-	{
-		if (empty($variants)) return;
-		
-		$existing = $this->getExistingVariants($productGid);
+		$this->recordResponse($data['productVariantsBulkUpdate'] ?? $data);
 
-		if (count($existing) === 1 && $existing[0]['title'] === 'Default Title') {
-			$this->replaceDefaultVariant(
-				$productGid,
-				$existing[0]['id'],
-				$variants[0]
+		$errors = $this->graphql->extractUserErrors($data, 'productVariantsBulkUpdate');
+		if (!empty($errors)) {
+			throw new ShopifyApiException(
+				'Shopify productVariantsBulkUpdate errors: ' . implode('; ', $errors),
+				422,
+				'productVariantsBulkUpdate'
 			);
+		}
+
+		foreach ($inventoryByGid as $variantGid => $inventoryQty) {
+			$this->applyVariantInventoryLevel($variantGid, $inventoryQty);
+		}
+
+		$this->mergeInventoryWireLog();
+	}
+
+	/** Append inventory GraphQL calls to the product wire log (inventorySetQuantities, inventoryActivate). */
+	private function mergeInventoryWireLog(): void
+	{
+		$inventoryService = app(ShopifyInventoryService::class);
+		if (!method_exists($inventoryService, 'takeWireLog')) {
 			return;
 		}
 
-		$mutation = <<<GQL
-		mutation bulkCreateVariants(\$productId: ID!, \$variants: [ProductVariantsBulkInput!]!) {
-			productVariantsBulkCreate(productId: \$productId, variants: \$variants) {
+		foreach ($inventoryService->takeWireLog() as $entry) {
+			$this->wireLog[] = $entry;
+		}
+	}
+
+	/**
+	 * @param array<int, array<string, mixed>> $variants
+	 */
+	private function bulkCreateVariants(string $productGid, array $variants): void
+	{
+		if ($variants === []) {
+			return;
+		}
+
+		$mutation = <<<'GQL'
+		mutation bulkCreateVariants($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+			productVariantsBulkCreate(productId: $productId, variants: $variants) {
 				productVariants { id }
 				userErrors { field message }
 			}
 		}
 		GQL;
 
-		$variantsInput = array_map(
-			fn($v) => $this->toGraphQLVariantInput($v),
-			$variants
-		);
+		$variantsInput = array_map(function ($v) use ($productGid) {
+			$input = $this->toGraphQLVariantInput($v);
+			$this->resolveVariantOptionIds($productGid, $input);
+			return $input;
+		}, $variants);
+
+		$this->recordWire('productVariantsBulkCreate', $mutation, ['productId' => $productGid, 'variants' => $variantsInput]);
 
 		$data = $this->graphql->query($mutation, [
 			'productId' => $productGid,
 			'variants'  => $variantsInput,
 		]);
+		$this->recordResponse($data['productVariantsBulkCreate'] ?? $data);
 
 		$errors = $this->graphql->extractUserErrors($data, 'productVariantsBulkCreate');
 		if (!empty($errors)) {
@@ -446,15 +486,677 @@ class ShopifyProductService
 		}
 	}
 
+	/**
+	 * inventoryQuantities is only valid on variant CREATE — strip before bulk update.
+	 *
+	 * @return array<string, mixed>|null
+	 */
+	private function extractInventoryQuantitiesFromVariantInput(array &$input): ?array
+	{
+		if (!isset($input['inventoryQuantities'])) {
+			return null;
+		}
+
+		$quantities = $input['inventoryQuantities'];
+		unset($input['inventoryQuantities']);
+
+		return is_array($quantities) ? $quantities : null;
+	}
+
+	/** Keep only variant bulk keys from field configs (+ GraphQL orchestration keys). */
+	private function normalizeVariantBulkInput(array &$input): void
+	{
+		$allowed = array_flip(array_merge(
+			$this->fieldMapping->variantBulkInputRoots(),
+			self::VARIANT_BULK_STRUCTURAL,
+		));
+
+		foreach (array_keys($input) as $key) {
+			if (!isset($allowed[$key])) {
+				unset($input[$key]);
+			}
+		}
+
+		foreach ($this->fieldMapping->variantBulkInputRoots() as $root) {
+			if (!isset($input[$root]) || !is_array($input[$root])) {
+				continue;
+			}
+
+			$this->pruneEmptyNestedArrays($input[$root]);
+
+			if ($input[$root] === []) {
+				unset($input[$root]);
+			}
+		}
+	}
+
+	/**
+	 * Shopify GraphQL rejects empty arrays where an input object is expected
+	 * (e.g. inventoryItem.measurement: [] after dropping incomplete weight).
+	 *
+	 * @param array<string, mixed> $data
+	 */
+	private function pruneEmptyNestedArrays(array &$data): void
+	{
+		foreach (array_keys($data) as $key) {
+			if (!is_array($data[$key])) {
+				continue;
+			}
+
+			$this->pruneEmptyNestedArrays($data[$key]);
+
+			if ($data[$key] === []) {
+				unset($data[$key]);
+			}
+		}
+	}
+
+	/**
+	 * Drop incomplete measurement.weight using paths from field configs.
+	 *
+	 * @param array<string, mixed> $variant
+	 */
+	private function pruneEmptyMeasurement(array &$variant): void
+	{
+		$valuePath = $this->fieldMapping->variantConfigWritePathContaining('measurement.weight', 'value');
+		if ($valuePath === null) {
+			return;
+		}
+
+		$unitPath = $this->fieldMapping->variantConfigWritePathContaining('measurement.weight', 'unit');
+		$value    = $this->fields->get($variant, $valuePath);
+		$unit     = $unitPath ? $this->fields->get($variant, $unitPath) : null;
+
+		$hasValue = $value !== null && $value !== '';
+		$hasUnit  = $unit !== null && $unit !== '';
+		$numeric  = $hasValue ? (float) $value : 0.0;
+
+		if ($hasValue && !$hasUnit && $unitPath !== null && $numeric > 0) {
+			$defaultUnit = $this->fieldMapping->defaultValueForVariantWritePath($unitPath);
+			if ($defaultUnit !== null) {
+				$this->fields->set($variant, $unitPath, $defaultUnit);
+			}
+
+			return;
+		}
+
+		if ($hasValue && $hasUnit && $numeric > 0) {
+			return;
+		}
+
+		$measurementPath = preg_replace('/\.weight\.[^.]+$/', '', $valuePath) ?? '';
+		if ($measurementPath !== '') {
+			$this->fields->unsetPath($variant, $measurementPath);
+		}
+	}
+
+	private function applyVariantInventoryLevel(string $variantGid, array $inventoryQuantities): void
+	{
+		$available = (int) ($inventoryQuantities['availableQuantity']
+			?? $inventoryQuantities['quantity']
+			?? 0);
+
+		$channelMaps = app(\App\Services\ChannelMappingService::class);
+		$odooLocationId = $channelMaps->defaultWarehouseOdooId();
+		$locationNumeric = $channelMaps->defaultShopifyWarehouseLocationId($odooLocationId);
+
+		if (!$locationNumeric) {
+			Log::warning('ShopifyProductService: skipped inventory set — no warehouse mapping for Shopify location.');
+			return;
+		}
+
+		$inventoryItemId = $this->getInventoryItemIdForVariant($variantGid);
+		if (!$inventoryItemId) {
+			Log::warning("ShopifyProductService: skipped inventory set — no inventoryItem for variant {$variantGid}.");
+			return;
+		}
+
+		$mapping = app(FieldMappingService::class);
+		$syntheticLocationKey = $odooLocationId ?? $locationNumeric;
+		$payload = $mapping->buildErpToEcomInventoryPayload(
+			$mapping->buildSyntheticInventoryQuant($available, $syntheticLocationKey)
+		);
+
+		if (!$this->payloadHasInventoryLocation($payload)) {
+			$this->injectInventoryLocation($payload, $locationNumeric);
+		}
+
+		$wireContext = [];
+		$wireKey     = $this->inventoryItemWireContextKey();
+		if ($wireKey !== null) {
+			$wireContext[$wireKey] = $this->fromGid($inventoryItemId);
+		}
+
+		app(ShopifyInventoryService::class)->setLevel($payload, $wireContext);
+	}
+
+	/**
+	 * Qty from variant field configs — location always from warehouse channel mapping.
+	 *
+	 * @param  array<string, mixed>  $payload
+	 * @return array<string, mixed>|null
+	 */
+	private function resolveVariantInventoryQuantities(array $payload): ?array
+	{
+		foreach ($this->variantInventoryQuantityPaths() as $path) {
+			$qty = $this->fields->get($payload, $path);
+			if ($qty !== null && $qty !== '') {
+				return ['availableQuantity' => $qty];
+			}
+		}
+
+		if (isset($payload['inventoryQuantities']) && is_array($payload['inventoryQuantities'])) {
+			$block = $payload['inventoryQuantities'];
+			$qty   = $block['availableQuantity'] ?? $block['quantity'] ?? null;
+			if ($qty !== null && $qty !== '') {
+				return ['availableQuantity' => $qty];
+			}
+		}
+
+		foreach (['qty_available', 'available', 'quantity'] as $key) {
+			if (array_key_exists($key, $payload) && $payload[$key] !== null && $payload[$key] !== '') {
+				return ['availableQuantity' => $payload[$key]];
+			}
+		}
+
+		foreach ($this->activeProductPayload['variants'] ?? [] as $variant) {
+			if (!is_array($variant) || $variant === $payload) {
+				continue;
+			}
+
+			foreach ($this->variantInventoryQuantityPaths() as $path) {
+				$qty = $this->fields->get($variant, $path);
+				if ($qty !== null && $qty !== '') {
+					return ['availableQuantity' => $qty];
+				}
+			}
+		}
+
+		foreach (['qty_available', 'available', 'quantity'] as $key) {
+			$value = $this->activeProductPayload[$key] ?? null;
+			if ($value !== null && $value !== '') {
+				return ['availableQuantity' => $value];
+			}
+		}
+
+		return null;
+	}
+
+	/** @return list<string> */
+	private function variantInventoryQuantityPaths(): array
+	{
+		$paths = [
+			'inventoryQuantities.availableQuantity',
+			'inventoryQuantities.quantity',
+		];
+
+		$settings = app(SettingsService::class);
+		foreach (app(FieldMappingService::class)->getMappings(
+			'product',
+			$settings->ecomDriver(),
+			$settings->erpDriver(),
+			'variant',
+			'erp_to_ecom'
+		) as $config) {
+			if (!$config->is_active) {
+				continue;
+			}
+
+			$path = trim($config->ecom_field ?? $config->shopify_field ?? '');
+			if ($path === '') {
+				continue;
+			}
+
+			$lower = strtolower($path);
+			if (!str_contains($lower, 'inventoryquantities') || str_contains($lower, 'locationid')) {
+				continue;
+			}
+
+			$paths[] = $path;
+		}
+
+		return array_values(array_unique($paths));
+	}
+
+	private function inventoryItemWireContextKey(): ?string
+	{
+		foreach (app(FieldMappingService::class)->getInventoryErpToEcomConfigs() as $config) {
+			$writePath = app(FieldMappingService::class)->resolveConfigWritePath($config);
+			$key       = trim($config->ecom_field ?? '');
+			if ($key !== '' && str_contains($writePath, 'inventoryItemId')) {
+				return $key;
+			}
+		}
+
+		return null;
+	}
+
+	/** @param array<string, mixed> $payload */
+	private function payloadHasInventoryLocation(array $payload): bool
+	{
+		foreach (app(FieldMappingService::class)->getInventoryErpToEcomConfigs() as $config) {
+			$path = trim($config->ecom_field ?? '');
+			if ($path === '' || !str_contains($path, 'locationId')) {
+				continue;
+			}
+
+			$value = $this->fields->get($payload, $path);
+			if ($value !== null && $value !== '') {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/** @param array<string, mixed> $payload */
+	private function injectInventoryLocation(array &$payload, string $locationNumeric): void
+	{
+		foreach (app(FieldMappingService::class)->getInventoryErpToEcomConfigs() as $config) {
+			$path = trim($config->ecom_field ?? '');
+			if ($path === '' || !str_contains($path, 'locationId')) {
+				continue;
+			}
+
+			$current = $this->fields->get($payload, $path);
+			if ($current === null || $current === '') {
+				$this->fields->set($payload, $path, $locationNumeric);
+			}
+
+			return;
+		}
+	}
+
+	private function getInventoryItemIdForVariant(string $variantGid): ?string
+	{
+		$query = <<<'GQL'
+		query($id: ID!) {
+		  productVariant(id: $id) {
+		    inventoryItem { id }
+		  }
+		}
+		GQL;
+
+		try {
+			$data = $this->graphql->query($query, ['id' => $variantGid]);
+			return $data['productVariant']['inventoryItem']['id'] ?? null;
+		} catch (\Throwable $e) {
+			Log::warning('ShopifyProductService: could not read inventoryItem id: ' . $e->getMessage());
+			return null;
+		}
+	}
+	
+	private function syncVariants(string $productGid, array $variants, array $options = []): void
+	{
+		if (empty($variants)) return;
+
+		if (!empty($options)) {
+			$this->ensureProductOptions($productGid, $options);
+		}
+
+		$existing = $this->getExistingVariants($productGid);
+
+		if (count($existing) === 1 && strcasecmp($existing[0]['title'] ?? '', 'Default Title') === 0) {
+			$this->replaceDefaultVariant($productGid, $existing[0]['id'], $variants[0]);
+			if (count($variants) > 1) {
+				$this->bulkCreateVariants($productGid, array_slice($variants, 1));
+			}
+			return;
+		}
+
+		$existingByKey = [];
+		foreach ($existing as $ev) {
+			foreach ($this->existingVariantMatchKeys($ev) as $key) {
+				$existingByKey[$key] = $ev;
+			}
+		}
+
+		$toUpdate = [];
+		$toCreate = [];
+
+		foreach ($variants as $payload) {
+			$match = $this->findExistingVariant($existingByKey, $payload);
+			if ($match !== null) {
+				$toUpdate[] = ['gid' => $match['id'], 'payload' => $payload];
+				foreach ($this->existingVariantMatchKeys($match) as $key) {
+					unset($existingByKey[$key]);
+				}
+			} else {
+				$toCreate[] = $payload;
+			}
+		}
+
+		if ($toUpdate !== []) {
+			$this->bulkUpdateVariants($productGid, $toUpdate);
+		}
+		if ($toCreate !== []) {
+			$this->bulkCreateVariants($productGid, $toCreate);
+		}
+	}
+
+	/**
+	 * Create missing product options before setting variant optionValues.
+	 * Shopify productUpdate does not accept productOptions — use productOptionsCreate.
+	 *
+	 * @param array<int, array{name: string, values: array<int, string>}> $options
+	 */
+	private function ensureProductOptions(string $productGid, array $options): void
+	{
+		if (empty($options)) {
+			return;
+		}
+
+		$allExisting = $this->getProductOptionsWithIds($productGid);
+		$existingBy  = [];
+		foreach ($allExisting as $opt) {
+			if (strcasecmp($opt['name'], 'Title') === 0) {
+				continue;
+			}
+			$existingBy[strtolower($opt['name'])] = $opt;
+		}
+
+		$nextPosition = count($allExisting) + 1;
+		$toCreate     = [];
+
+		foreach ($options as $opt) {
+			$name = trim((string) ($opt['name'] ?? ''));
+			if ($name === '') {
+				continue;
+			}
+
+			if (isset($existingBy[strtolower($name)])) {
+				continue;
+			}
+
+			$values = array_values(array_filter(array_map(
+				fn($v) => ['name' => (string) $v],
+				(array) ($opt['values'] ?? [])
+			), fn($v) => $v['name'] !== ''));
+
+			if ($values === []) {
+				continue;
+			}
+
+			$toCreate[] = [
+				'name'     => $name,
+				'position' => $nextPosition++,
+				'values'   => $values,
+			];
+		}
+
+		if ($toCreate === []) {
+			return;
+		}
+
+		$mutation = <<<'GQL'
+		mutation ensureProductOptions(
+		  $productId: ID!
+		  $options: [OptionCreateInput!]!
+		  $variantStrategy: ProductOptionCreateVariantStrategy
+		) {
+		  productOptionsCreate(
+		    productId: $productId
+		    options: $options
+		    variantStrategy: $variantStrategy
+		  ) {
+		    product { id }
+		    userErrors { field message }
+		  }
+		}
+		GQL;
+
+		$variables = [
+			'productId'       => $productGid,
+			'options'         => $toCreate,
+			'variantStrategy' => 'LEAVE_AS_IS',
+		];
+
+		$this->recordWire('productOptionsCreate', $mutation, $variables);
+
+		$data = $this->graphql->query($mutation, $variables);
+		$this->recordResponse($data['productOptionsCreate'] ?? $data);
+
+		$errors = $this->graphql->extractUserErrors($data, 'productOptionsCreate');
+		if (!empty($errors)) {
+			throw new ShopifyApiException(
+				'Shopify product options sync failed: ' . implode('; ', $errors),
+				422,
+				'productOptionsCreate'
+			);
+		}
+	}
+
+	/**
+	 * @return array<int, array{id: string, name: string, position: int, values: array<int, string>}>
+	 */
+	private function getProductOptionsWithIds(string $productGid): array
+	{
+		$query = <<<'GQL'
+		query($id: ID!) {
+		  product(id: $id) {
+		    options {
+		      id
+		      name
+		      position
+		      optionValues { id name }
+		    }
+		  }
+		}
+		GQL;
+
+		try {
+			$data = $this->graphql->query($query, ['id' => $productGid]);
+		} catch (\Throwable $e) {
+			Log::warning('ShopifyProductService: could not read product options: ' . $e->getMessage());
+			return [];
+		}
+
+		$options = [];
+		foreach ($data['product']['options'] ?? [] as $opt) {
+			$name = (string) ($opt['name'] ?? '');
+			if ($name === '') {
+				continue;
+			}
+			$values = array_values(array_filter(array_map(
+				fn($v) => (string) ($v['name'] ?? ''),
+				$opt['optionValues'] ?? []
+			)));
+			$options[] = [
+				'id'       => (string) ($opt['id'] ?? ''),
+				'name'     => $name,
+				'position' => (int) ($opt['position'] ?? 0),
+				'values'   => $values,
+			];
+		}
+
+		return $options;
+	}
+
+	/**
+	 * Map variant option label leaf → Shopify optionId (paths/leaves from field config).
+	 *
+	 * @param array<string, mixed> $variantInput
+	 */
+	private function resolveVariantOptionIds(string $productGid, array &$variantInput): void
+	{
+		$specs = $this->fieldMapping->getVariantOptionSlotSpecs();
+		if ($specs === []) {
+			return;
+		}
+
+		$productOptions = $this->getProductOptionsWithIds($productGid);
+		$byName         = [];
+		foreach ($productOptions as $opt) {
+			if (strcasecmp($opt['name'], 'Title') === 0) {
+				continue;
+			}
+			$byName[strtolower($opt['name'])] = $opt;
+		}
+
+		$byPrefix = [];
+		foreach ($specs as $spec) {
+			$byPrefix[$spec['prefix']][] = $spec;
+		}
+
+		foreach ($byPrefix as $prefix => $prefixSpecs) {
+			usort($prefixSpecs, fn ($a, $b) => $a['index'] <=> $b['index']);
+
+			$resolved = [];
+			foreach ($prefixSpecs as $spec) {
+				$block = $this->fields->get($variantInput, "{$prefix}.{$spec['index']}");
+				if (!is_array($block)) {
+					continue;
+				}
+
+				$optionName = trim((string) ($block[$spec['labelLeaf']] ?? ''));
+				$valueName  = trim((string) ($block[$spec['valueLeaf']] ?? ''));
+
+				if ($optionName === '' && $valueName === '') {
+					continue;
+				}
+
+				$match = $byName[strtolower($optionName)] ?? null;
+				if (!$match) {
+					throw new ShopifyApiException(
+						"Shopify option \"{$optionName}\" does not exist on the product. "
+						. 'Add two variant field-config rows per option index (lower sort_order = label leaf, next = value leaf).',
+						422,
+						'productVariantsBulkUpdate'
+					);
+				}
+
+				$entry = ['name' => $valueName !== '' ? $valueName : ($match['values'][0] ?? '')];
+				if ($match['id'] !== '') {
+					$entry['optionId'] = $match['id'];
+				} else {
+					$entry['optionName'] = $match['name'];
+				}
+
+				$resolved[] = $entry;
+			}
+
+			if ($resolved !== []) {
+				$variantInput[$prefix] = $resolved;
+			} else {
+				unset($variantInput[$prefix]);
+			}
+		}
+	}
+
+	/**
+	 * @param array<int|string, mixed> $list
+	 * @return array<int, mixed>
+	 */
+	private function normalizeIndexedList(array $list): array
+	{
+		$out = [];
+		ksort($list, SORT_NATURAL);
+		foreach ($list as $entry) {
+			if (is_array($entry)) {
+				$out[] = $entry;
+			}
+		}
+
+		return $out;
+	}
+
     public function get(string $shopifyProductId): ?array
     {
         try {
             $query = <<<'GQL'
             query getProduct($id: ID!) {
                 product(id: $id) {
-                    id title handle status
+                    id
+                    title
+                    descriptionHtml
+                    handle
+                    status
+                    vendor
+                    productType
+                    category {
+                        id
+                        name
+                        fullName
+                    }
+                    tags
+                    templateSuffix
+                    publishedAt
+                    onlineStoreUrl
+                    createdAt
+                    updatedAt
+                    seo {
+                        title
+                        description
+                    }
+                    options {
+                        id
+                        name
+                        position
+                        values
+                    }
                     variants(first: 100) {
-                        edges { node { id sku price compareAtPrice inventoryItem { id } } }
+                        edges {
+                            node {
+                                id
+                                title
+                                sku
+                                barcode
+                                price
+                                compareAtPrice
+                                inventoryQuantity
+                                taxable
+                                inventoryPolicy
+                                position
+                                selectedOptions {
+                                    name
+                                    value
+                                }
+                                inventoryItem {
+                                    id
+                                    tracked
+                                    requiresShipping
+                                    harmonizedSystemCode
+                                    countryCodeOfOrigin
+                                    measurement {
+                                        weight {
+                                            value
+                                            unit
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    images(first: 10) {
+                        edges {
+                            node {
+                                id
+                                url
+                                altText
+                                width
+                                height
+                            }
+                        }
+                    }
+                    metafields(first: 20) {
+                        edges {
+                            node {
+                                id
+                                namespace
+                                key
+                                value
+                                type
+                            }
+                        }
+                    }
+                    collections(first: 10) {
+                        edges {
+                            node {
+                                id
+                                title
+                                handle
+                            }
+                        }
                     }
                 }
             }
@@ -477,425 +1179,534 @@ class ShopifyProductService
     // toGraphQLInput() then routes them into the correct GraphQL structure.
     // ─────────────────────────────────────────────────────────────────────
 
-    public function buildPayload(array $erpTemplate, array $variants, array $attributeValues): array
+    public function buildPayload(array $erpTemplate, array $variants, array $attributeValues, array $related = []): array
     {
-        $configs         = $this->getFieldConfigs();
-        $templateConfigs = array_filter($configs, fn($c) => $c['scope'] === 'template');
-        $variantConfigs  = array_filter($configs, fn($c) => $c['scope'] === 'variant');
-
-        $payload = [];
-
-        foreach ($templateConfigs as $config) {
-            $key = $config['shopify_field'];
-
-            if (!$config['is_active']) {
-                continue;
-            }
-
-            $value = $this->resolveValue($erpTemplate, $config);
-            if ($value === null || $value === '') continue;
-
-            $payload[$key] = $value;
-        }
-
-        // status must always be present
-        if (!isset($payload['status'])) {
-            $payload['status'] = 'draft';
-        }
-
-        // Variants
-        $shopifyVariants = array_map(
-            fn($v) => $this->buildVariantPayload($v, $attributeValues, $variantConfigs),
-            $variants
+        return $this->fieldMapping->buildErpToEcomProductPayload(
+            $erpTemplate,
+            $variants,
+            $attributeValues,
+            related: $related
         );
-        $payload['variants'] = $shopifyVariants;
-
-        // Options
-        if (!empty($erpTemplate['attribute_line_ids'])) {
-            $options = $this->buildOptions($attributeValues, $shopifyVariants);
-            if (!empty($options)) {
-                $payload['options'] = $options;
-            }
-        }
-
-        return $payload;
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // toGraphQLInput — routes shopify_field keys into GraphQL ProductInput
-    //
-    // No field name lookup tables. Routing is by key-pattern rules only.
+    // GraphQL variables — built from config paths (product.*, media.*)
     // ─────────────────────────────────────────────────────────────────────
 
-    private function toGraphQLInput(array $payload): array
-    {
-        $input = [];
-        $media = [];
+    /**
+     * Build mutation variables from the config-driven payload.
+     * Field configs write to product.vendor, media.0.originalSource, etc.
+     *
+     * @return array<string, mixed> e.g. ['product' => [...], 'media' => [...]]
+     */
+    private function buildGraphQLVariables(
+        array $payload,
+        bool $includeProductOptions = true,
+        ?string $productGid = null
+    ): array {
+        $product = is_array($payload['product'] ?? null) ? $payload['product'] : [];
+        $media   = is_array($payload['media'] ?? null) ? $payload['media'] : [];
 
+        // Legacy flat keys at payload root (bare title/vendor without product. prefix in config)
         foreach ($payload as $key => $value) {
-            if (in_array($key, self::STRUCTURAL, true)) continue;
+            if (!is_string($key) || str_starts_with($key, '_') || $value === null || $value === '') {
+                continue;
+            }
+            if (in_array($key, self::STRUCTURAL, true) || in_array($key, self::MUTATION_ROOTS, true)) {
+                continue;
+            }
 
-            $this->applyTemplateKey($input, $key, $value);
+            if (str_contains($key, '.')) {
+                [$root, $path] = explode('.', $key, 2);
+                if ($root === 'product' && $path !== '') {
+                    $this->fields->set($product, $path, $value);
+                } elseif ($root === 'media' && $path !== '') {
+                    $this->fields->set($media, $path, $value);
+                }
+                continue;
+            }
+
+            $product[$key] = $value;
         }
 
-        // images → CreateMediaInput[]
-        if (!empty($payload['images'])) {
-            foreach ((array)$payload['images'] as $img) {
-				if (!empty($img['attachment'])) {
-					$media[] = [
-						'mediaContentType' => 'IMAGE',
-						'originalSource'   => $this->makePublicImageUrl($img['attachment']),
-					];
-				} elseif (!empty($img['src'])) {
-					$media[] = [
-						'mediaContentType' => 'IMAGE',
-						'originalSource'   => $img['src'],
-					];
-				}
-			}
+        if ($media === []) {
+            $imageSource = $payload['images'] ?? $product['images'] ?? null;
+            if ($imageSource !== null && $imageSource !== '') {
+                if (is_string($imageSource)) {
+                    $imageSource = [['attachment' => $imageSource]];
+                }
+                $media = $this->imagesToMediaInput((array) $imageSource);
+                unset($product['images']);
+            }
         }
 
-        // options → productOptions [{name, values:[{name}]}]
-        if (!empty($payload['options'])) {
-            $input['productOptions'] = array_map(fn($o) => [
+        if ($includeProductOptions && !empty($payload['options'])) {
+            $product['productOptions'] = array_map(fn ($o) => [
                 'name'   => $o['name'],
-                'values' => array_map(fn($v) => ['name' => $v], (array)($o['values'] ?? [])),
+                'values' => array_map(fn ($v) => ['name' => $v], (array) ($o['values'] ?? [])),
             ], $payload['options']);
         }
 
-        // variants
-        // if (!empty($payload['variants'])) {
-            // $input['variants'] = array_map(fn($v) => $this->toGraphQLVariantInput($v), $payload['variants']);
-        // }
+        if ($productGid !== null) {
+            $product['id'] = $this->toGid('Product', $productGid);
+        }
 
-        return [$input, $media];
+        $variables = ['product' => $this->prepareGraphQLInput($product)];
+
+        $normalizedMedia = $this->normalizeMediaInput($media);
+        if ($normalizedMedia !== []) {
+            $variables['media'] = $normalizedMedia;
+        }
+
+        return $variables;
     }
-	
-	private function makePublicImageUrl(string $base64): string
-	{
-		// Already URL
-		if (filter_var($base64, FILTER_VALIDATE_URL)) {
-			return $base64;
-		}
 
-		// Raw base64 from Odoo
-		$path = 'shopify_images/' . uniqid() . '.jpg';
-
-		\Storage::disk('public')->put($path, base64_decode($base64));
-
-		return asset('storage/' . $path);
-	}
-
-    /**
-     * Route one template-scope key into ProductInput.
-     *
-     * Rules (checked in order):
-     *  1. 'status'       → strtoupper  (enum: ACTIVE / DRAFT / ARCHIVED)
-     *  2. 'tags'         → string → array
-     *  3. dot.notation   → deeply nested via dotSet()
-     *  4. everything else → passthrough (title, descriptionHtml, vendor, etc.)
-     */
-    private function applyTemplateKey(array &$input, string $key, mixed $value): void
+    /** @param array<int, array<string, mixed>> $images */
+    private function imagesToMediaInput(array $images): array
     {
-        switch ($key) {
-            case 'status':
-                $input['status'] = strtoupper((string)$value);
-                return;
-
-            case 'tags':
-                $input['tags'] = is_array($value)
-                    ? $value
-                    : array_values(array_filter(array_map('trim', explode(',', (string)$value))));
-                return;
+        if (isset($images['attachment']) || isset($images['src']) || isset($images['originalSource'])) {
+            $images = [$images];
         }
 
-        if (str_contains($key, '.')) {
-            $this->dotSet($input, $key, $value);
-            return;
+        $media = [];
+        foreach ($images as $img) {
+            if (!is_array($img)) {
+                continue;
+            }
+            if (!empty($img['attachment'])) {
+                $media[] = [
+                    'mediaContentType' => 'IMAGE',
+                    'originalSource'   => $this->resolveMediaOriginalSource((string) $img['attachment']),
+                ];
+            } elseif (!empty($img['src'])) {
+                $media[] = [
+                    'mediaContentType' => 'IMAGE',
+                    'originalSource'   => $img['src'],
+                ];
+            } elseif (!empty($img['originalSource'])) {
+                $media[] = [
+                    'mediaContentType' => $img['mediaContentType'] ?? 'IMAGE',
+                    'originalSource'   => $img['originalSource'],
+                ];
+            }
         }
 
-        $input[$key] = $value;
+        return $media;
+    }
+
+    /** @param array<int|string, mixed> $media */
+    private function normalizeMediaInput(array $media): array
+    {
+        if ($media === []) {
+            return [];
+        }
+
+        if (!array_is_list($media)) {
+            ksort($media, SORT_NUMERIC);
+        }
+
+        $list = [];
+        foreach ($media as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            if (!empty($item['attachment'])) {
+                $item['originalSource'] = $this->resolveMediaOriginalSource((string) $item['attachment']);
+                unset($item['attachment']);
+            }
+
+            if (empty($item['mediaContentType'])) {
+                $item['mediaContentType'] = 'IMAGE';
+            }
+
+            if (!empty($item['originalSource'])) {
+                $list[] = $item;
+            }
+        }
+
+        return $list;
     }
 
     /**
-     * Route one variant payload row into GraphQL ProductVariantInput.
+     * Prepare nested product input — prune empties only (no field-name routing).
      *
-     * Rules:
-     *  1. option1/2/3           → optionValues[]
-     *  2. inventoryPolicy       → top-level, uppercased enum
-     *  3. price / compareAtPrice→ top-level, formatted to 2dp string
-     *  4. taxable               → top-level, bool
-     *  5. inventoryItem.*       → nested under inventoryItem
-     *  6. dot-notation          → nested via dotSet()
-     *  7. everything else       → passthrough
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
      */
+    private function prepareGraphQLInput(array $payload): array
+    {
+        $output = [];
+
+        foreach ($payload as $key => $value) {
+            if (in_array($key, self::STRUCTURAL, true)) {
+                continue;
+            }
+
+            if (str_starts_with((string) $key, '_')) {
+                continue;
+            }
+
+            if ($value === null || $value === '') {
+                continue;
+            }
+
+            if (is_string($key) && str_contains($key, '.')) {
+                $this->dotSet($output, $key, $value);
+            } else {
+                $output[$key] = $value;
+            }
+        }
+
+        $this->pruneEmptyNestedArrays($output);
+
+        foreach ($this->fieldMapping->getVariantOptionPrefixes() as $prefix) {
+            if (!empty($output[$prefix]) && is_array($output[$prefix])) {
+                $output[$prefix] = $this->normalizeIndexedList($output[$prefix]);
+            }
+        }
+
+        $category = $this->normalizeTaxonomyCategoryInput($output['category'] ?? null);
+        if ($category === null) {
+            unset($output['category']);
+        } else {
+            $output['category'] = $category;
+        }
+
+        if (array_key_exists('status', $output)) {
+            $status = $this->normalizeProductStatusInput($output['status']);
+            if ($status === null) {
+                unset($output['status']);
+            } else {
+                $output['status'] = $status;
+            }
+        }
+
+        return $output;
+    }
+
+    /** ProductCreateInput.status must be ACTIVE, ARCHIVED, DRAFT, or UNLISTED — not a boolean. */
+    private function normalizeProductStatusInput(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'ACTIVE' : 'DRAFT';
+        }
+
+        if (is_int($value) || (is_string($value) && ctype_digit(trim($value)))) {
+            return ((int) $value) === 1 ? 'ACTIVE' : 'DRAFT';
+        }
+
+        $normalized = strtoupper(trim((string) $value));
+        if (in_array($normalized, ['ACTIVE', 'ARCHIVED', 'DRAFT', 'UNLISTED'], true)) {
+            return $normalized;
+        }
+
+        return match (strtolower(trim((string) $value))) {
+            'active', 'published', 'true', 'yes', '1' => 'ACTIVE',
+            'archived' => 'ARCHIVED',
+            'unlisted' => 'UNLISTED',
+            default    => 'DRAFT',
+        };
+    }
+
+    /** ProductCreateInput.category must be a TaxonomyCategory GID, not a label or nested object. */
+    private function normalizeTaxonomyCategoryInput(mixed $value): ?string
+    {
+        if ($value === null || $value === '' || $value === false) {
+            return null;
+        }
+
+        if (is_array($value)) {
+            return null;
+        }
+
+        $value = trim((string) $value);
+        if ($value === '') {
+            return null;
+        }
+
+        if (str_starts_with($value, 'gid://shopify/TaxonomyCategory/')) {
+            return $value;
+        }
+
+        if (ctype_digit($value)) {
+            return "gid://shopify/TaxonomyCategory/{$value}";
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve CreateMediaInput.originalSource from a public URL or Odoo base64 image.
+     * Base64 is uploaded via Shopify staged uploads — no public app URL required.
+     */
+    private function resolveMediaOriginalSource(string $source): string
+    {
+        $source = trim($source);
+        if ($source === '') {
+            throw new ShopifyApiException('Product image source is empty', 422, 'media');
+        }
+
+        if (filter_var($source, FILTER_VALIDATE_URL)) {
+            return $source;
+        }
+
+        $decoded = $this->decodeBase64Image($source);
+        if ($decoded === null) {
+            throw new ShopifyApiException(
+                'Product image from ERP is not valid base64 image data',
+                422,
+                'media'
+            );
+        }
+
+        return $this->uploadViaShopifyStagedUpload($decoded);
+    }
+
+    /** @return array{binary: string, mime: string, filename: string}|null */
+    private function decodeBase64Image(string $input): ?array
+    {
+        $input = trim($input);
+        if ($input === '') {
+            return null;
+        }
+
+        $mime = null;
+        if (preg_match('#^data:(image/[^;]+);base64,#i', $input, $matches)) {
+            $mime  = strtolower($matches[1]);
+            $input = substr($input, (int) strpos($input, ',') + 1);
+        }
+
+        $input  = preg_replace('/\s+/', '', $input);
+        $binary = base64_decode($input, true);
+        if ($binary === false || $binary === '') {
+            return null;
+        }
+
+        if (@getimagesizefromstring($binary) === false) {
+            Log::warning('ShopifyProductService: decoded ERP image is not a valid image');
+
+            return null;
+        }
+
+        if ($mime === null) {
+            $finfo = new \finfo(FILEINFO_MIME_TYPE);
+            $mime  = strtolower((string) ($finfo->buffer($binary) ?: 'image/jpeg'));
+        }
+
+        $extension = match ($mime) {
+            'image/png'  => 'png',
+            'image/gif'  => 'gif',
+            'image/webp' => 'webp',
+            default      => 'jpg',
+        };
+
+        return [
+            'binary'   => $binary,
+            'mime'     => $mime,
+            'filename' => 'product.' . $extension,
+        ];
+    }
+
+    /** @param array{binary: string, mime: string, filename: string} $image */
+    private function uploadViaShopifyStagedUpload(array $image): string
+    {
+        $mutation = <<<'GQL'
+        mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+            stagedUploadsCreate(input: $input) {
+                stagedTargets {
+                    url
+                    resourceUrl
+                    parameters { name value }
+                }
+                userErrors { field message }
+            }
+        }
+        GQL;
+
+        $data = $this->graphql->query($mutation, [
+            'input' => [[
+                'filename'   => $image['filename'],
+                'mimeType'   => $image['mime'],
+                'resource'   => 'PRODUCT_IMAGE',
+                'httpMethod' => 'POST',
+            ]],
+        ]);
+
+        $errors = $this->graphql->extractUserErrors($data, 'stagedUploadsCreate');
+        if ($errors !== []) {
+            throw new ShopifyApiException(
+                'Shopify stagedUploadsCreate errors: ' . implode('; ', $errors),
+                422,
+                'stagedUploadsCreate'
+            );
+        }
+
+        $target = $data['stagedUploadsCreate']['stagedTargets'][0] ?? null;
+        if (!is_array($target) || empty($target['url']) || empty($target['resourceUrl'])) {
+            throw new ShopifyApiException('Shopify stagedUploadsCreate returned no upload target', 422, 'stagedUploadsCreate');
+        }
+
+        $multipart = [];
+        foreach ($target['parameters'] ?? [] as $param) {
+            if (!is_array($param) || !isset($param['name'], $param['value'])) {
+                continue;
+            }
+            $multipart[] = [
+                'name'     => (string) $param['name'],
+                'contents' => (string) $param['value'],
+            ];
+        }
+
+        $multipart[] = [
+            'name'     => 'file',
+            'contents' => $image['binary'],
+            'filename' => $image['filename'],
+            'headers'  => ['Content-Type' => $image['mime']],
+        ];
+
+        try {
+            (new Client(['timeout' => 60]))->post((string) $target['url'], ['multipart' => $multipart]);
+        } catch (\Throwable $e) {
+            throw new ShopifyApiException(
+                'Shopify staged image upload failed: ' . $e->getMessage(),
+                422,
+                'stagedUpload',
+                null,
+                $e
+            );
+        }
+
+        return (string) $target['resourceUrl'];
+    }
+
     private function toGraphQLVariantInput(array $variantPayload): array
     {
-        $variant       = [];
-        $inventoryItem = [];
-        $optionValues  = [];
-
-        // Pre-extract _option_name_N keys before the loop
-        $optionNameMap = [];
-        foreach ($variantPayload as $k => $v) {
-            if (str_starts_with($k, '_option_name_')) {
-                $pos = (int) substr($k, strlen('_option_name_'));
-                $optionNameMap[$pos] = (string) $v;
-            }
-        }
-
-        foreach ($variantPayload as $key => $value) {
-            if ($value === null || $value === '') continue;
-
-            // Skip internal _option_name_N keys — not sent to Shopify
-            if (str_starts_with($key, '_option_name_')) continue;
-
-            // ── option1/2/3 ──────────────────────────────────────────────
-            if (in_array($key, ['option1', 'option2', 'option3'], true)) {
-                $pos  = (int) substr($key, -1);
-                // Use real attribute name (e.g. 'Color') not generic 'Option 1'
-                $name = $optionNameMap[$pos] ?? 'Option ' . $pos;
-                $optionValues[$pos] = ['name' => $name, 'value' => (string) $value];
-                continue;
-            }
-
-            // ── inventoryPolicy enum ─────────────────────────────────────
-            if ($key === 'inventoryPolicy') {
-                $variant['inventoryPolicy'] =
-                    self::INVENTORY_POLICIES[strtoupper((string)$value)]
-                    ?? self::INVENTORY_POLICIES[strtolower((string)$value)]
-                    ?? 'DENY';
-                continue;
-            }
-
-            // ── price / compareAtPrice ───────────────────────────────────
-            if (in_array($key, ['price', 'compareAtPrice'], true)) {
-                $variant[$key] = number_format((float)$value, 2, '.', '');
-                continue;
-            }
-
-            // ── taxable ──────────────────────────────────────────────────
-            if ($key === 'taxable') {
-                $variant['taxable'] = (bool)$value;
-                continue;
-            }
-
-            // ── inventoryItem.* ──────────────────────────────────────────
-            if (str_starts_with($key, 'inventoryItem.')) {
-				$subKey = substr($key, strlen('inventoryItem.'));
-
-				if ($this->isValidInventoryKey($subKey)) {
-					$this->applyInventorySubKey($inventoryItem, $subKey, $value);
-				} else {
-					// auto-promote to variant level (no hardcoding)
-					$variant[$subKey] = $value;
-				}
-				continue;
-			}
-
-            // ── other dot-notation (future deep keys) ────────────────────
-            if (str_contains($key, '.')) {
-                $this->dotSet($variant, $key, $value);
-                continue;
-            }
-
-            // ── passthrough (future top-level variant fields) ────────────
-            $variant[$key] = $value;
-        }
-		
-		// ── Shopify requires full weight object if measurement.weight is present ──
-		if (
-			isset($inventoryItem['measurement']['weight']['value']) &&
-			!isset($inventoryItem['measurement']['weight']['unit'])
-		) {
-			// Default from config mindset — safe fallback
-			$inventoryItem['measurement']['weight']['unit'] = 'KILOGRAMS';
-		}
-
-		if (
-			isset($inventoryItem['measurement']['weight']['unit']) &&
-			!isset($inventoryItem['measurement']['weight']['value'])
-		) {
-			unset($inventoryItem['measurement']['weight']); // drop incomplete object
-		}
-
-        if (!empty($inventoryItem)) {
-            $variant['inventoryItem'] = $inventoryItem;
-        }
-
-        if (!empty($optionValues)) {
-            ksort($optionValues);
-            $variant['optionValues'] = array_values($optionValues);
-        }
+        $variant = $this->prepareGraphQLInput($variantPayload);
+        $this->finalizeVariantInput($variant);
 
         return $variant;
     }
-	
-	private function isValidInventoryKey(string $subKey): bool
-	{
-		return in_array($subKey, self::INVENTORY_SCHEMA, true);
-	}
 
-    /**
-     * Apply an inventoryItem sub-key (after stripping 'inventoryItem.' prefix).
-     *
-     * Sub-keys and their handling:
-     *   tracked                  → bool
-     *   requiresShipping         → bool
-     *   measurement.weight.unit  → enum via WEIGHT_UNITS
-     *   measurement.weight.value → float
-     *   sku, barcode             → passthrough string
-     *   any dot sub-key          → nested via dotSet()
-     *   anything else            → passthrough
-     */
-    private function applyInventorySubKey(array &$inventoryItem, string $subKey, mixed $value): void
+    /** @param array<string, mixed> $variant */
+    private function finalizeVariantInput(array &$variant): void
     {
-        switch ($subKey) {
-            case 'tracked':
-                // Also accepts legacy 'shopify' string from old REST configs
-                $inventoryItem['tracked'] = is_bool($value)
-                    ? $value
-                    : strtolower((string)$value) === 'shopify' || (bool)$value;
-                return;
+        $this->normalizeVariantBulkInput($variant);
+        $this->pruneEmptyMeasurement($variant);
 
-            case 'requiresShipping':
-                $inventoryItem['requiresShipping'] = (bool)$value;
-                return;
+        foreach ($this->fieldMapping->variantBulkInputRoots() as $root) {
+            if (!isset($variant[$root]) || !is_array($variant[$root])) {
+                continue;
+            }
 
-            case 'measurement.weight.unit':
-                $unit = self::WEIGHT_UNITS[strtoupper((string)$value)]
-                     ?? self::WEIGHT_UNITS[strtolower((string)$value)]
-                     ?? 'KILOGRAMS';
-                $this->dotSet($inventoryItem, 'measurement.weight.unit', $unit);
-                return;
+            $this->pruneEmptyNestedArrays($variant[$root]);
 
-            case 'measurement.weight.value':
-                $this->dotSet($inventoryItem, 'measurement.weight.value', (float)$value);
-                return;
-        }
-
-        // dot sub-nesting or passthrough (sku, barcode, etc.)
-        if (str_contains($subKey, '.')) {
-            $this->dotSet($inventoryItem, $subKey, $value);
-        } else {
-            $inventoryItem[$subKey] = $value;
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Variant payload builder
-    // ─────────────────────────────────────────────────────────────────────
-
-    private function buildVariantPayload(array $variant, array $attributeValues, array $variantConfigs): array
-    {
-        $avMap = array_column($attributeValues, null, 'id');
-        $avIds = $variant['product_template_attribute_value_ids'] ?? [];
-        $out   = [];
-
-        foreach ($variantConfigs as $config) {
-            if (!$config['is_active']) continue; // inactive → omit
-
-            $value = $this->resolveValue($variant, $config);
-            if ($value === null) continue;
-
-            $out[$config['shopify_field']] = $value;
-        }
-
-        // Attribute values → option1/2/3
-        // Store both the option value AND the attribute name so buildOptions()
-        // can use the real attribute name (e.g. 'Color') not generic 'Option 1'
-        foreach (array_slice($avIds, 0, 3) as $index => $avId) {
-            $av = $avMap[$avId] ?? null;
-            if ($av) {
-                $pos = $index + 1;
-                $out['option' . $pos] = $av['_mapped_name'] ?? $av['name'];
-                // Store attribute name for buildOptions() — e.g. 'Color', 'Size'
-                $out['_option_name_' . $pos] = is_array($av['attribute_id'])
-                    ? $av['attribute_id'][1]
-                    : ($av['attribute_id'] ?? 'Option ' . $pos);
+            if ($variant[$root] === []) {
+                unset($variant[$root]);
             }
         }
 
-        return $out;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Options builder
-    // ─────────────────────────────────────────────────────────────────────
-
-    private function buildOptions(array $attributeValues, array $variants): array
-    {
-        $options = []; $seen = [];
-
-        foreach ($variants as $variant) {
-            foreach (['option1', 'option2', 'option3'] as $i => $k) {
-                if (!empty($variant[$k]) && !isset($seen[$i])) {
-                    $seen[$i] = true;
-                    // Use real attribute name stored by buildVariantPayload
-                    $attrName  = $variant['_option_name_' . ($i + 1)] ?? ('Option ' . ($i + 1));
-                    $options[$i] = ['name' => $attrName, 'values' => []];
-                }
+        foreach ($this->fieldMapping->getVariantOptionPrefixes() as $prefix) {
+            if (!empty($variant[$prefix]) && is_array($variant[$prefix])) {
+                $variant[$prefix] = $this->normalizeIndexedList($variant[$prefix]);
             }
         }
-
-        foreach ($variants as $variant) {
-            foreach (['option1', 'option2', 'option3'] as $i => $k) {
-                if (isset($options[$i]) && !empty($variant[$k])
-                    && !in_array($variant[$k], $options[$i]['values'])) {
-                    $options[$i]['values'][] = $variant[$k];
-                }
-            }
-        }
-
-        return array_values(array_filter($options, fn($o) => !empty($o['values'])));
     }
 
     // ─────────────────────────────────────────────────────────────────────
     // GQL mutation strings
     // ─────────────────────────────────────────────────────────────────────
 
-    private function productMutation(string $name): string
+    private function productCreateMutation(): string
+	{
+		return <<<'GQL'
+		mutation productCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
+			productCreate(product: $product, media: $media) {
+				product {
+					id title handle status
+					variants(first: 100) {
+						edges { node { id sku price compareAtPrice inventoryItem { id } } }
+					}
+				}
+				userErrors { field message }
+			}
+		}
+		GQL;
+	}
+
+	private function productUpdateMutation(): string
+	{
+		return <<<'GQL'
+		mutation productUpdate($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
+			productUpdate(product: $product, media: $media) {
+				product {
+					id title handle status
+					variants(first: 100) {
+						edges { node { id sku price compareAtPrice inventoryItem { id } } }
+					}
+				}
+				userErrors { field message }
+			}
+		}
+		GQL;
+	}
+
+    // ─────────────────────────────────────────────────────────────────────
+    // GraphQL structural decode — NOT field mapping.
+    //
+    // Converts Shopify GraphQL wire shape → storable JSON:
+    //   • edges[].node  → flat array
+    //   • gid://…       → numeric/string id
+    //
+    // Field names are preserved exactly as the API returns them (camelCase).
+    // Which fields sync to ERP/ecom is 100% driven by product_field_configs —
+    // same pattern as OdooProductService fetching only configured erp_fields.
+    // ─────────────────────────────────────────────────────────────────────
+
+    private function decodeGraphqlProduct(array $node): array
     {
-        return <<<GQL
-        mutation {$name}(\$input: ProductInput!, \$media: [CreateMediaInput!]) {
-            {$name}(input: \$input, media: \$media) {
-                product {
-                    id title handle status
-                    variants(first: 100) {
-                        edges { node { id sku price compareAtPrice inventoryItem { id } } }
-                    }
-                }
-                userErrors { field message }
-            }
-        }
-        GQL;
+        $decoded = $this->decodeGraphqlValue($node);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Response normalizer — GQL response → REST-like shape for callers
-    // ─────────────────────────────────────────────────────────────────────
+    /**
+     * Recursively decode GraphQL response values. No field-name rewriting.
+     */
+    private function decodeGraphqlValue(mixed $value): mixed
+    {
+        if (is_string($value) && str_starts_with($value, 'gid://')) {
+            return $this->fromGid($value);
+        }
 
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        // Connection pattern: { edges: [ { node: … } ] } → [ … ]
+        if (array_key_exists('edges', $value) && is_array($value['edges'])) {
+            return array_map(
+                fn ($edge) => $this->decodeGraphqlValue($edge['node'] ?? $edge),
+                $value['edges']
+            );
+        }
+
+        $out = [];
+        foreach ($value as $key => $item) {
+            $out[$key] = $this->decodeGraphqlValue($item);
+        }
+
+        return $out;
+    }
+
+    /** @deprecated Use decodeGraphqlProduct — kept as alias for internal callers */
     private function normalizeProduct(array $p): array
     {
-        $variants = array_map(function ($edge) {
-            $v = $edge['node'];
-            return [
-                'id'                => $this->fromGid($v['id']),
-                'sku'               => $v['sku']            ?? '',
-                'price'             => $v['price']          ?? '0.00',
-                'compare_at_price'  => $v['compareAtPrice'] ?? null,
-                'inventory_item_id' => isset($v['inventoryItem']['id'])
-                    ? $this->fromGid($v['inventoryItem']['id']) : null,
-            ];
-        }, $p['variants']['edges'] ?? []);
-
-        return [
-            'id'       => $this->fromGid($p['id']),
-            'title'    => $p['title']  ?? '',
-            'handle'   => $p['handle'] ?? '',
-            'status'   => strtolower($p['status'] ?? 'draft'),
-            'variants' => $variants,
-        ];
+        return $this->decodeGraphqlProduct($p);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -911,6 +1722,34 @@ class ShopifyProductService
     public function fromGid(string $gid): string
     {
         return (string) last(explode('/', $gid));
+    }
+
+    /**
+     * Permanently delete a product from Shopify (GraphQL productDelete).
+     */
+    public function delete(string|int $id): void
+    {
+        $gid = $this->toGid('Product', (string) $id);
+
+        $mutation = <<<'GQL'
+        mutation productDelete($input: ProductDeleteInput!) {
+            productDelete(input: $input) {
+                deletedProductId
+                userErrors { field message }
+            }
+        }
+        GQL;
+
+        $result = $this->graphql->query($mutation, [
+            'input' => ['id' => $gid],
+        ]);
+
+        $errors = $result['productDelete']['userErrors'] ?? [];
+        if ($errors !== []) {
+            throw new ShopifyApiException(
+                'Shopify productDelete failed: ' . ($errors[0]['message'] ?? 'unknown error')
+            );
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -932,108 +1771,31 @@ class ShopifyProductService
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Field config loader
+    // Wire log (Info tab)
     // ─────────────────────────────────────────────────────────────────────
 
-    private function getFieldConfigs(): array
-    {
-        $settings   = app(\App\Services\SettingsService::class);
-        $ecomDriver = $settings->ecomDriver();  // 'shopify'
-        $erpDriver  = $settings->erpDriver();   // 'odoo', 'sap', etc.
-        $cacheKey   = "product_field_configs_{$ecomDriver}_{$erpDriver}";
+	private function recordWire(string $action, string $query, array $variables): void
+	{
+		$this->wireLog[] = ['action' => $action, 'query' => $query, 'variables' => $variables];
+	}
 
-        return Cache::remember($cacheKey, 60, function () use ($ecomDriver, $erpDriver) {
-            return ProductFieldConfig::where('ecom_driver', $ecomDriver)
-                ->where('erp_driver', $erpDriver)
-                ->where('is_active', true)
-                ->orderBy('sort_order')
-                ->orderBy('id')
-                ->get()
-                ->map(fn($c) => [
-                    // ecom_field is the GraphQL/REST key (renamed from shopify_field)
-                    'ecom_field'        => $c->ecom_field     ?? $c->shopify_field,
-                    'shopify_field'     => $c->ecom_field     ?? $c->shopify_field, // alias kept for routing rules
-                    'field_type'        => $c->field_type,
-                    'erp_field'         => $c->erp_field      ?? $c->odoo_field,
-                    'odoo_field'        => $c->erp_field      ?? $c->odoo_field,   // alias kept for resolveValue
-                    'erp_field_2'       => $c->erp_field_2    ?? $c->odoo_field_2,
-                    'odoo_field_2'      => $c->erp_field_2    ?? $c->odoo_field_2, // alias
-                    'combine_separator' => $c->combine_separator ?? ' ',
-                    'scope'             => $c->scope,
-                    'default_value'     => $c->default_value,
-                    'transform'         => $c->transform,
-                    'min_length'        => $c->min_length,
-                    'max_length'        => $c->max_length,
-                    'is_active'         => (bool) $c->is_active,
-                ])
-                ->toArray();
-        });
-    }
+	/**
+	 * Attach the raw GraphQL response (incl. userErrors) to the most recent
+	 * wire entry, so the Info tab shows what Shopify actually returned —
+	 * not just the request we sent. Errors like "Media processing failed"
+	 * live in userErrors and were previously discarded.
+	 */
+	private function recordResponse(mixed $response): void
+	{
+		if (!empty($this->wireLog)) {
+			$this->wireLog[count($this->wireLog) - 1]['response'] = $response;
+		}
+	}
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Value resolvers (Odoo → intermediate value)
-    // ─────────────────────────────────────────────────────────────────────
-
-    private function resolveValue(array $erpData, array $config): mixed
-    {
-        if ($config['field_type'] === 'custom') {
-            return $config['default_value'] ?? null;
-        }
-
-        if ($config['field_type'] === 'combine') {
-            $val1  = $this->readErpField($erpData, $config['odoo_field']   ?? '');
-            $val2  = $this->readErpField($erpData, $config['odoo_field_2'] ?? '');
-            $val1  = ($val1 === false) ? '' : (string)($val1 ?? '');
-            $val2  = ($val2 === false) ? '' : (string)($val2 ?? '');
-            $sep   = $config['combine_separator'] ?? ' ';
-            $value = trim($val1 . ($val1 && $val2 ? $sep : '') . $val2);
-            if ($value === '') $value = $config['default_value'] ?? null;
-            return $this->applyLengthConstraints($value, $config);
-        }
-
-        $raw = $this->readErpField($erpData, $config['odoo_field'] ?? '');
-        if ($raw === false) $raw = null;
-
-        $value = $this->applyTransform($raw, $config['transform'], $erpData);
-        if ($value === null || $value === false || $value === '') {
-            $value = $config['default_value'] ?? null;
-        }
-
-        return $this->applyLengthConstraints($value, $config);
-    }
-
-    private function readErpField(array $data, string $key): mixed
-    {
-        if ($key === '') return null;
-
-        if (str_contains($key, '.')) {
-            [$parent, $index] = explode('.', $key, 2);
-            $parent = $data[$parent] ?? null;
-            return is_array($parent) ? ($parent[(int)$index] ?? null) : null;
-        }
-
-        return $data[$key] ?? null;
-    }
-
-    private function applyTransform(mixed $value, ?string $transform, array $context = []): mixed
-    {
-        return match ($transform) {
-            'number_format'          => number_format((float)($value ?? 0), 2, '.', ''),
-            'number_format_nullable' => ($value > 0) ? number_format((float)$value, 2, '.', '') : null,
-            'boolean_status'         => (!empty($value) || !empty($context['website_published']) || !empty($context['is_published'])) ? 'active' : 'draft',
-            'array_second'           => is_array($value) ? ($value[1] ?? null) : $value,
-            'base64_image'           => !empty($value) ? [['attachment' => $value]] : null,
-            default                  => $value,
-        };
-    }
-
-    private function applyLengthConstraints(mixed $value, array $config): mixed
-    {
-        if (!is_string($value)) return $value;
-        if ($config['min_length'] && strlen($value) < $config['min_length']) return null;
-        if ($config['max_length'] && strlen($value) > $config['max_length']) {
-            $value = substr($value, 0, $config['max_length']);
-        }
-        return $value;
-    }
+	public function takeWireLog(): array
+	{
+		$log = $this->wireLog;
+		$this->wireLog = [];
+		return $log;
+	}
 }

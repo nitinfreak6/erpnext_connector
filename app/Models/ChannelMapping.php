@@ -106,4 +106,10 @@ class ChannelMapping extends Model
             ->pluck('external_id', 'odoo_id')
             ->toArray();
     }
+
+    /** ERP-side ID column in channel_mappings (odoo_id until renamed). */
+    public static function erpIdColumn(): string
+    {
+        return 'odoo_id';
+    }
 }

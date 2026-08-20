@@ -32,24 +32,26 @@ class ConnectorSetting extends Model
     /**
      * Decrypt value for secrets.
      */
-   public function getDecryptedValue(): ?string
-	{
-		if (!$this->is_secret || empty($this->attributes['value'])) {
-			return $this->attributes['value'] ?? null;
-		}
+    public function getDecryptedValue(): ?string
+    {
+        if (!$this->is_secret || empty($this->attributes['value'])) {
+            return $this->attributes['value'] ?? null;
+        }
 
-		try {
-			$value = Crypt::decryptString($this->attributes['value']);
-			// Handle double encryption
-			try {
-				return Crypt::decryptString($value);
-			} catch (\Throwable) {
-				return $value; // single encryption only
-			}
-		} catch (\Throwable) {
-			return $this->attributes['value'];
-		}
-	}
+        try {
+            $value = Crypt::decryptString($this->attributes['value']);
+
+            // Legacy rows double-encrypted before the settings save fix — unwrap once more.
+            try {
+                return Crypt::decryptString($value);
+            } catch (\Throwable) {
+                return $value;
+            }
+        } catch (\Throwable) {
+            // Do not treat raw ciphertext as a usable secret (prevents re-saving garbage on every form post).
+            return null;
+        }
+    }
 
     /**
      * Get masked version for display.

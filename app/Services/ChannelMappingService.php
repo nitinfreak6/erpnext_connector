@@ -111,12 +111,458 @@ class ChannelMappingService
     {
         $result = $this->resolve(ChannelMapping::TYPE_WAREHOUSE, ChannelMapping::CHANNEL_SHOPIFY, $odooLocationId);
 
-        // Legacy config fallback
         if (!$result) {
-            $result = config('odoo.location_map', [])[$odooLocationId] ?? null;
+            $settingsMap = app(SettingsService::class)->odooLocationMap();
+            $result = $settingsMap[$odooLocationId]
+                ?? config('odoo.location_map', [])[$odooLocationId]
+                ?? null;
         }
 
         return $result;
+    }
+
+    /**
+     * Direct Shopify location → Odoo stock.location lookup (ignores channel filter).
+     * Matches numeric ids and gid://shopify/Location/… interchangeably.
+     */
+    public function resolveWarehouseOdooIdForShopifyLocation(string $shopifyLocationId): ?string
+    {
+        $targetNumeric = $this->normalizeShopifyLocationNumericId(trim($shopifyLocationId));
+
+        if ($targetNumeric === '' || $targetNumeric === '0') {
+            return null;
+        }
+
+        foreach (ChannelMapping::query()
+            ->where('type', ChannelMapping::TYPE_WAREHOUSE)
+            ->where(function ($query) {
+                $query->where('is_active', true)
+                    ->orWhere('is_active', 1)
+                    ->orWhere('is_active', '1');
+            })
+            ->get(['odoo_id', 'external_id']) as $mapping) {
+            $externalId = trim((string) ($mapping->external_id ?? ''));
+
+            if (!$this->isRealWarehouseExternalId($externalId)) {
+                continue;
+            }
+
+            if ($this->normalizeShopifyLocationNumericId($externalId) !== $targetNumeric
+                && !$this->shopifyLocationMatches($externalId, $shopifyLocationId)) {
+                continue;
+            }
+
+            $odooId = trim((string) ($mapping->odoo_id ?? ''));
+
+            if ($odooId !== '' && $odooId !== '0') {
+                return $odooId;
+            }
+        }
+
+        $activeRows = ChannelMapping::query()
+            ->where('type', ChannelMapping::TYPE_WAREHOUSE)
+            ->where(function ($query) {
+                $query->where('is_active', true)
+                    ->orWhere('is_active', 1)
+                    ->orWhere('is_active', '1');
+            })
+            ->get(['odoo_id', 'external_id'])
+            ->filter(fn ($row) => $this->isRealWarehouseExternalId((string) ($row->external_id ?? '')));
+
+        if ($activeRows->count() === 1) {
+            $odooId = trim((string) ($activeRows->first()->odoo_id ?? ''));
+
+            if ($odooId !== '' && $odooId !== '0') {
+                return $odooId;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Short runtime diagnostic when warehouse reverse lookup fails (shown in UI error).
+     */
+    public function warehouseLookupDiagnostic(string $shopifyLocationId): string
+    {
+        $targetNumeric = $this->normalizeShopifyLocationNumericId(trim($shopifyLocationId));
+        $active        = ChannelMapping::query()
+            ->where('type', ChannelMapping::TYPE_WAREHOUSE)
+            ->where(function ($query) {
+                $query->where('is_active', true)
+                    ->orWhere('is_active', 1)
+                    ->orWhere('is_active', '1');
+            })
+            ->get(['external_id', 'odoo_id']);
+        $labels = $active
+            ->filter(fn ($row) => $this->isRealWarehouseExternalId((string) ($row->external_id ?? '')))
+            ->map(fn ($row) => trim((string) ($row->external_id ?? '')) . '→' . trim((string) ($row->odoo_id ?? '')))
+            ->filter(fn ($label) => $label !== '→')
+            ->values()
+            ->implode(', ');
+
+        return 'Debug: '
+            . $active->count() . ' active warehouse row(s)'
+            . ($labels !== '' ? " [{$labels}]" : '')
+            . ", target #{$targetNumeric}.";
+    }
+
+    public function odooWarehouse(string $shopifyLocationId, ?string $channel = null): ?string
+    {
+        $shopifyLocationId = trim($shopifyLocationId);
+
+        if ($shopifyLocationId === '') {
+            return null;
+        }
+
+        $direct = $this->resolveWarehouseOdooIdForShopifyLocation($shopifyLocationId);
+        if ($direct !== null) {
+            return $direct;
+        }
+
+        $channels = [];
+        if ($channel !== null && trim($channel) !== '') {
+            $channels[] = strtolower(trim($channel));
+        }
+        $channels[] = ChannelMapping::CHANNEL_SHOPIFY;
+        $channels   = array_values(array_unique($channels));
+
+        foreach ($channels as $tryChannel) {
+            $matched = $this->findActiveWarehouseOdooId($shopifyLocationId, $tryChannel);
+            if ($matched !== null) {
+                return $matched;
+            }
+        }
+
+        $matched = $this->findActiveWarehouseOdooId($shopifyLocationId, null);
+        if ($matched !== null) {
+            return $matched;
+        }
+
+        foreach ($this->warehouseExternalIdCandidates($shopifyLocationId) as $candidate) {
+            $byLabel = ChannelMapping::ofType(ChannelMapping::TYPE_WAREHOUSE)
+                ->active()
+                ->where('external_label', $candidate)
+                ->value('odoo_id');
+
+            if ($byLabel !== null && $byLabel !== '') {
+                return (string) $byLabel;
+            }
+        }
+
+        foreach ($this->legacyWarehouseMaps() as $odooId => $mappedShopifyId) {
+            if ($this->shopifyLocationMatches((string) $mappedShopifyId, $shopifyLocationId)) {
+                return (string) $odooId;
+            }
+        }
+
+        if ($this->matchesInventoryFetchLocation($shopifyLocationId, $channel ?? ChannelMapping::CHANNEL_SHOPIFY)) {
+            $realRows = ChannelMapping::ofType(ChannelMapping::TYPE_WAREHOUSE)
+                ->active()
+                ->get(['odoo_id', 'external_id'])
+                ->filter(fn ($row) => $this->isRealWarehouseExternalId((string) ($row->external_id ?? '')));
+
+            if ($realRows->count() === 1) {
+                $odooId = trim((string) ($realRows->first()->odoo_id ?? ''));
+
+                if ($odooId !== '' && $odooId !== '0') {
+                    return $odooId;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function findActiveWarehouseOdooId(string $shopifyLocationId, ?string $channel): ?string
+    {
+        $query = ChannelMapping::ofType(ChannelMapping::TYPE_WAREHOUSE)->active();
+
+        if ($channel !== null && $channel !== '') {
+            $channel = strtolower(trim($channel));
+            $query->where(function ($q) use ($channel) {
+                $q->where('channel', $channel)
+                    ->orWhere('channel', ChannelMapping::CHANNEL_BOTH);
+            });
+        }
+
+        foreach ($query->get(['odoo_id', 'external_id']) as $mapping) {
+            $externalId = trim((string) ($mapping->external_id ?? ''));
+
+            if (!$this->isRealWarehouseExternalId($externalId)) {
+                continue;
+            }
+
+            if (!$this->shopifyLocationMatches($externalId, $shopifyLocationId)) {
+                continue;
+            }
+
+            $odooId = trim((string) ($mapping->odoo_id ?? ''));
+
+            if ($odooId !== '' && $odooId !== '0') {
+                return $odooId;
+            }
+        }
+
+        return null;
+    }
+
+    private function isRealWarehouseExternalId(string $externalId): bool
+    {
+        $externalId = trim($externalId);
+
+        return $externalId !== '' && $externalId !== '0';
+    }
+
+    private function matchesInventoryFetchLocation(string $shopifyLocationId, string $channel): bool
+    {
+        $defaultLoc = $this->defaultShopifyWarehouseLocationId();
+        if ($defaultLoc !== null && $this->shopifyLocationMatches($defaultLoc, $shopifyLocationId)) {
+            return true;
+        }
+
+        $settingsLoc = trim((string) (app(SettingsService::class)->get('shopify_location_id') ?? ''));
+        if ($settingsLoc !== '' && $this->shopifyLocationMatches($settingsLoc, $shopifyLocationId)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Actionable hint when reverse warehouse lookup fails (inactive row, wrong external_id, etc.).
+     */
+    public function warehouseReverseMappingHint(string $shopifyLocationId, ?string $channel = null): ?string
+    {
+        $channel = $channel ?: ChannelMapping::CHANNEL_SHOPIFY;
+
+        $inactive = ChannelMapping::ofType(ChannelMapping::TYPE_WAREHOUSE)
+            ->forChannel($channel)
+            ->where('is_active', false)
+            ->get(['external_id'])
+            ->first(fn ($row) => $this->shopifyLocationMatches(
+                (string) ($row->external_id ?? ''),
+                $shopifyLocationId
+            ));
+
+        if ($inactive !== null) {
+            return 'Warehouse mapping for external id '
+                . $inactive->external_id
+                . ' exists but is inactive — open Mappings → Warehouse and set Status to Active.';
+        }
+
+        $activeRows = ChannelMapping::ofType(ChannelMapping::TYPE_WAREHOUSE)
+            ->forChannel($channel)
+            ->active()
+            ->get(['external_id', 'odoo_id']);
+
+        if ($activeRows->isEmpty()) {
+            return 'No active warehouse mappings found — add Mappings → Warehouse with external id '
+                . $shopifyLocationId
+                . ' mapped to your Odoo stock.location id.';
+        }
+
+        $matching = $activeRows->first(fn ($row) => $this->shopifyLocationMatches(
+            (string) ($row->external_id ?? ''),
+            $shopifyLocationId
+        ));
+
+        if ($matching !== null) {
+            $odooId = trim((string) ($matching->odoo_id ?? ''));
+
+            if ($odooId === '' || $odooId === '0') {
+                return 'Warehouse mapping matched Shopify location #'
+                    . $shopifyLocationId
+                    . ' but Odoo id is empty — set Odoo id to your stock.location id (e.g. 5 for WH/Stock).';
+            }
+        }
+
+        if ($activeRows->count() > 1) {
+            $externalIds = $activeRows
+                ->pluck('external_id')
+                ->map(fn ($id) => trim((string) $id))
+                ->filter(fn ($id) => $id !== '')
+                ->implode(', ');
+
+            return 'Multiple active warehouse mappings ('
+                . ($externalIds !== '' ? $externalIds : 'none')
+                . ') — ensure one row matches Shopify location #'
+                . $shopifyLocationId
+                . ' (numeric or gid://shopify/Location/…).';
+        }
+
+        if ($activeRows->count() === 1) {
+            $row = $activeRows->first();
+            $ext = trim((string) ($row->external_id ?? ''));
+
+            if ($ext === '' || $ext === '0' || !$this->shopifyLocationMatches($ext, $shopifyLocationId)) {
+                return 'Active warehouse mapping uses external id "'
+                    . ($ext !== '' ? $ext : '—')
+                    . '" but stock was fetched for Shopify location #'
+                    . $shopifyLocationId
+                    . '. Update external id to '
+                    . $shopifyLocationId
+                    . ' under Mappings → Warehouse (Odoo id '
+                    . ($row->odoo_id ?? '—')
+                    . ').';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Compare Shopify location IDs (numeric vs GID) — used by inventory warehouse resolution.
+     */
+    public function shopifyLocationMatches(string $mappedShopifyId, string $shopifyLocationId): bool
+    {
+        $leftNumeric  = $this->normalizeShopifyLocationNumericId($mappedShopifyId);
+        $rightNumeric = $this->normalizeShopifyLocationNumericId($shopifyLocationId);
+
+        if ($leftNumeric !== '' && $rightNumeric !== '' && $leftNumeric === $rightNumeric) {
+            return true;
+        }
+
+        $left  = $this->warehouseExternalIdCandidates($mappedShopifyId);
+        $right = $this->warehouseExternalIdCandidates($shopifyLocationId);
+
+        foreach ($left as $l) {
+            foreach ($right as $r) {
+                if ($this->normalizeShopifyLocationNumericId($l) === $this->normalizeShopifyLocationNumericId($r)
+                    && $this->normalizeShopifyLocationNumericId($l) !== '') {
+                    return true;
+                }
+            }
+        }
+
+        return array_intersect($left, $right) !== [];
+    }
+
+    /** @return array<string, string> Odoo location ID → Shopify location ID */
+    private function legacyWarehouseMaps(): array
+    {
+        $settingsMap = app(SettingsService::class)->odooLocationMap();
+        $configMap   = config('odoo.location_map', []);
+
+        return $settingsMap !== [] ? $settingsMap : (is_array($configMap) ? $configMap : []);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function warehouseExternalIdCandidates(string $shopifyLocationId): array
+    {
+        $raw = trim($shopifyLocationId);
+        if ($raw === '') {
+            return [];
+        }
+
+        $candidates = [$raw];
+
+        if (str_starts_with($raw, 'gid://')) {
+            $numeric = (string) last(explode('/', $raw));
+            if ($numeric !== '') {
+                $candidates[] = $numeric;
+            }
+        } elseif (ctype_digit($raw)) {
+            $candidates[] = "gid://shopify/Location/{$raw}";
+        }
+
+        return array_values(array_unique($candidates));
+    }
+
+    /**
+     * First active Odoo warehouse id for inventory/product stock (WH/Stock, etc.).
+     */
+    public function defaultWarehouseOdooId(?string $channel = ChannelMapping::CHANNEL_SHOPIFY): ?string
+    {
+        $query = ChannelMapping::ofType(ChannelMapping::TYPE_WAREHOUSE)
+            ->active()
+            ->orderBy('id');
+
+        if ($channel !== null && $channel !== '') {
+            $query->forChannel($channel);
+        }
+
+        $odooId = $query->value('odoo_id');
+
+        if ($odooId === null || $odooId === '') {
+            return null;
+        }
+
+        return (string) $odooId;
+    }
+
+    public function hasActiveWarehouseMappings(): bool
+    {
+        return ChannelMapping::query()
+            ->where('type', ChannelMapping::TYPE_WAREHOUSE)
+            ->where(function ($query) {
+                $query->where('is_active', true)
+                    ->orWhere('is_active', 1)
+                    ->orWhere('is_active', '1');
+            })
+            ->get(['external_id'])
+            ->contains(fn ($row) => $this->isRealWarehouseExternalId((string) ($row->external_id ?? '')));
+    }
+
+    /**
+     * Active Odoo stock.location IDs with warehouse channel mappings.
+     *
+     * @return list<string>
+     */
+    public function activeWarehouseOdooIds(string $channel = ChannelMapping::CHANNEL_SHOPIFY): array
+    {
+        return ChannelMapping::ofType(ChannelMapping::TYPE_WAREHOUSE)
+            ->forChannel($channel)
+            ->active()
+            ->pluck('odoo_id')
+            ->map(fn ($id) => (string) $id)
+            ->filter(fn ($id) => $id !== '')
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Shopify location for inventory fetch/display — warehouse mapping first, then settings fallback.
+     */
+    public function defaultShopifyWarehouseLocationId(?string $odooLocationId = null): ?string
+    {
+        if ($odooLocationId !== null && $odooLocationId !== '') {
+            $mapped = $this->shopifyWarehouse((string) $odooLocationId);
+            if ($mapped !== null && $mapped !== '') {
+                return $this->normalizeShopifyLocationNumericId($mapped);
+            }
+        }
+
+        $externalId = ChannelMapping::ofType(ChannelMapping::TYPE_WAREHOUSE)
+            ->forChannel(ChannelMapping::CHANNEL_SHOPIFY)
+            ->active()
+            ->orderBy('id')
+            ->value('external_id');
+
+        if ($externalId !== null && $externalId !== '' && (string) $externalId !== '0') {
+            return $this->normalizeShopifyLocationNumericId((string) $externalId);
+        }
+
+        $settings = app(SettingsService::class)->get('shopify_location_id');
+        if ($settings) {
+            return $this->normalizeShopifyLocationNumericId((string) $settings);
+        }
+
+        return app(\App\Services\Shopify\ShopifyInventoryService::class)->getFirstLocationId();
+    }
+
+    public function normalizeShopifyLocationNumericId(string $id): string
+    {
+        $id = trim($id);
+
+        if (str_starts_with($id, 'gid://')) {
+            return (string) last(explode('/', $id));
+        }
+
+        return $id;
     }
 
     /**
@@ -133,6 +579,14 @@ class ChannelMappingService
     public function odooShippingProduct(string $shopifyShippingTitle): ?string
     {
         return $this->resolveReverse(ChannelMapping::TYPE_SHIPPING, ChannelMapping::CHANNEL_SHOPIFY, $shopifyShippingTitle);
+    }
+
+    /**
+     * Shipping: Odoo delivery.carrier ID → Shopify tracking company / shipping title string.
+     */
+    public function shopifyShippingCarrier(string $odooCarrierId): ?string
+    {
+        return $this->resolve(ChannelMapping::TYPE_SHIPPING, ChannelMapping::CHANNEL_SHOPIFY, $odooCarrierId);
     }
 
     /**

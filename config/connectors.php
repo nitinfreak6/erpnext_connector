@@ -61,6 +61,71 @@ return [
             ],
         ],
 
+        'erpnext' => [
+            'adapter'      => \App\Services\Erp\ErpNext\ErpNextErpAdapter::class,
+            'label'        => 'ERPNext',
+            'icon'         => '📊',
+            'color'        => 'teal',
+            'credentials'  => [
+                'erpnext_url',
+                'erpnext_api_key',
+                'erpnext_api_secret',
+                'erpnext_timeout',
+                'erpnext_warehouse',
+                'erpnext_warehouse_map',
+                'erpnext_selling_price_list',
+            ],
+            'credential_meta' => [
+                'erpnext_url' => [
+                    'label'       => 'Site URL',
+                    'description' => 'Full ERPNext site URL, e.g. https://mycompany.erpnext.com',
+                    'field_type'  => 'text',
+                ],
+                'erpnext_api_key' => [
+                    'label'       => 'API Key',
+                    'description' => 'User → API Access → Generate Keys',
+                    'field_type'  => 'password',
+                    'is_secret'   => true,
+                ],
+                'erpnext_api_secret' => [
+                    'label'       => 'API Secret',
+                    'description' => 'Shown once when keys are generated',
+                    'field_type'  => 'password',
+                    'is_secret'   => true,
+                ],
+                'erpnext_timeout' => [
+                    'label'         => 'Request Timeout',
+                    'description'   => 'HTTP timeout in seconds',
+                    'field_type'    => 'number',
+                    'default_value' => '30',
+                ],
+                'erpnext_warehouse' => [
+                    'label'       => 'Default Warehouse',
+                    'description' => 'e.g. Stores - YC',
+                    'field_type'  => 'text',
+                ],
+                'erpnext_warehouse_map' => [
+                    'label'         => 'Warehouse Map',
+                    'description'   => 'JSON map: ERPNext warehouse name → Shopify location ID',
+                    'field_type'    => 'textarea',
+                    'default_value' => '{}',
+                ],
+                'erpnext_selling_price_list' => [
+                    'label'         => 'Selling Price List',
+                    'description'   => 'ERPNext Item Price list for Shopify price sync (e.g. Standard Selling)',
+                    'field_type'    => 'text',
+                    'default_value' => 'Standard Selling',
+                ],
+            ],
+            'jobs'         => [],
+            'entity_types' => [
+                'product'   => ['product'],
+                'order'     => ['order', 'sales_order'],
+                'customer'  => ['customer'],
+                'inventory' => ['inventory'],
+            ],
+        ],
+
         // Stub adapter — present to prove the binding resolves. NOT functional.
         // Remove from this list (or finish the adapter) before exposing in the UI.
         'sap' => [

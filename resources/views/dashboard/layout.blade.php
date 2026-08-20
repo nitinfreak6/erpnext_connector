@@ -5,13 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>@yield('title', 'Dashboard') — Connector</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="{{ asset('css/custom.css') }}">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <style>
-        [x-cloak] { display: none !important; }
-        /* Tailwind CDN doesn't support @apply; keep minimal plain CSS here. */
-        .badge { display: inline-flex; align-items: center; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; line-height: 1rem; }
-    </style>
+    @stack('styles')
 </head>
 <body class="h-full" x-data="{ sidebarOpen: false }">
 
@@ -51,15 +48,67 @@
                 <p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Admin</p>
             </div>
 
-            <a href="{{ route('dashboard.settings') }}"
-               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.settings*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
-                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                </svg>
-                Global Settings
-            </a>
+            @if(auth()->user()->hasPermission('manage-settings'))
+            @php $accountSettingsActive = request()->routeIs('dashboard.settings*'); @endphp
+            <div x-data="{ accountOpen: {{ $accountSettingsActive ? 'true' : 'false' }} }">
+                <button @click="accountOpen = !accountOpen"
+                        class="w-full flex items-center justify-between gap-3 px-3 py-2 text-sm rounded-lg transition-colors
+                               {{ $accountSettingsActive ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        </svg>
+                        Account Settings
+                    </div>
+                    <svg class="w-3.5 h-3.5 shrink-0 transition-transform" :class="accountOpen ? 'rotate-180' : ''"
+                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+
+                <div x-show="accountOpen" x-cloak
+                     x-transition:enter="transition ease-out duration-100"
+                     x-transition:enter-start="opacity-0 -translate-y-1"
+                     x-transition:enter-end="opacity-100 translate-y-0"
+                     class="mt-1 ml-3 pl-3 border-l border-indigo-700/50 space-y-0.5">
+
+                    <a href="{{ route('dashboard.settings') }}"
+                       class="flex items-center gap-2.5 px-2 py-1.5 text-xs rounded-lg transition-colors
+                              {{ request()->routeIs('dashboard.settings')
+                                 ? 'bg-indigo-600 text-white font-medium'
+                                 : 'text-indigo-200 hover:bg-indigo-700/50 hover:text-white' }}">
+                        <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        Global Settings
+                    </a>
+
+                    <a href="{{ route('dashboard.settings.erp') }}"
+                       class="flex items-center gap-2.5 px-2 py-1.5 text-xs rounded-lg transition-colors
+                              {{ request()->routeIs('dashboard.settings.erp*')
+                                 ? 'bg-indigo-600 text-white font-medium'
+                                 : 'text-indigo-200 hover:bg-indigo-700/50 hover:text-white' }}">
+                        <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        {{ $erpDisplayName }} Settings
+                    </a>
+
+                    <a href="{{ route('dashboard.settings.ecom') }}"
+                       class="flex items-center gap-2.5 px-2 py-1.5 text-xs rounded-lg transition-colors
+                              {{ request()->routeIs('dashboard.settings.ecom*')
+                                 ? 'bg-indigo-600 text-white font-medium'
+                                 : 'text-indigo-200 hover:bg-indigo-700/50 hover:text-white' }}">
+                        <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        {{ $ecomDisplayName }} Settings
+                    </a>
+                </div>
+            </div>
+            @endif
 
             <a href="{{ route('dashboard.users.index') }}"
                class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.users*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
@@ -72,9 +121,11 @@
             @endif
 
             {{-- Sync section --}}
+            @if(($featureCustomers ?? true) || ($featureProducts ?? true) || ($featureOrders ?? true) || ($featureInventory ?? true))
             <div class="pt-3 pb-1">
                 <p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Sync</p>
             </div>
+            @endif
 			
 @if($featureCustomers ?? true)
 			<a href="{{ route('dashboard.customers') }}"
@@ -122,23 +173,10 @@
             </a>
             @endif
 
-            {{-- Logs section --}}
+            @if(auth()->user()->hasPermission('manage-settings'))
             <div class="pt-3 pb-1">
-                <p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Logs & Events</p>
+                <p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Alerts</p>
             </div>
-
-            @if(auth()->user()->hasPermission('view-logs'))
-            <a href="{{ route('dashboard.logs') }}"
-               class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.logs*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
-                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                </svg>
-                Sync Logs
-            </a>
-            @endif
-			
-			@if(auth()->user()->hasPermission('manage-settings'))
             <a href="{{ route('dashboard.alerts.index') }}"
                class="flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors {{ request()->routeIs('dashboard.alerts*') ? 'bg-indigo-700 text-white font-medium' : 'text-indigo-100 hover:bg-indigo-700/60' }}">
                 <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -161,7 +199,7 @@
             @endif-->
 			
 			{{-- Mappings section --}}
-			@if(auth()->user()->hasPermission('manage-settings'))
+			@if(auth()->user()->hasPermission('manage-settings') && !empty($sidebarMappingTypes))
 			<div class="pt-3 pb-1">
 				<p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Mappings</p>
 			</div>
@@ -190,22 +228,7 @@
 					 x-transition:enter-end="opacity-100 translate-y-0"
 					 class="mt-1 ml-3 pl-3 border-l border-indigo-700/50 space-y-0.5">
 			 
-					@php
-					$mappingTypes = [
-						'warehouse'        => ['label' => 'Warehouse',        'icon' => 'M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z'],
-						'shipping'         => ['label' => 'Shipping',         'icon' => 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'],
-						'category'         => ['label' => 'Category',         'icon' => 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10'],
-						'pricelist'        => ['label' => 'Pricelist',        'icon' => 'M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z'],
-						'payment'          => ['label' => 'Payment',          'icon' => 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z'],
-						'channel'          => ['label' => 'Channel',          'icon' => 'M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z'],
-						'sales_order_type' => ['label' => 'Order Type',       'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'],
-						'sales_rep'        => ['label' => 'Sales Rep',        'icon' => 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z'],
-						'product_size'     => ['label' => 'Product Size',     'icon' => 'M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4'],
-						'tax'              => ['label' => 'Tax',              'icon' => 'M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z'],
-					];
-					@endphp
-			 
-					@foreach($mappingTypes as $slug => $info)
+					@foreach($sidebarMappingTypes as $slug => $info)
 					<a href="{{ route('dashboard.mappings.index', $slug) }}"
 					   class="flex items-center gap-2.5 px-2 py-1.5 text-xs rounded-lg transition-colors
 							  {{ request()->routeIs('dashboard.mappings.index') && request()->route('type') === $slug
@@ -222,14 +245,13 @@
 			@endif
 			
 				{{-- Field Configuration collapsible --}}
-			@if(auth()->user()->hasPermission('manage-settings'))
+			@if(auth()->user()->hasPermission('manage-settings') && ($fieldConfigEntities ?? collect())->isNotEmpty())
 			<div class="pt-3 pb-1">
 				<p class="px-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Field Configuration</p>
 			</div>
 
 			@php
-				$fieldConfigEntities = \App\Models\EntityDefinition::where('is_active', true)->orderBy('sort_order')->get();
-				$fieldConfigActive   = request()->routeIs('dashboard.product-field-config*');
+				$fieldConfigActive = request()->routeIs('dashboard.product-field-config*');
 			@endphp
 			<div x-data="{ fieldConfigOpen: {{ $fieldConfigActive ? 'true' : 'false' }} }">
 				<button @click="fieldConfigOpen = !fieldConfigOpen"
@@ -355,5 +377,112 @@
 </div>
 
 @stack('scripts')
+<script>
+window.syncListing = {
+    async runAction(ctx, key, url, options = {}) {
+        const method  = options.method || 'POST';
+        const message = options.message || 'Working…';
+        ctx.setLoading(key, true);
+        ctx.pageLoading = true;
+        ctx.pageLoadingMessage = message;
+        try {
+            const headers = {
+                'X-CSRF-TOKEN': ctx.csrfToken,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            };
+            const fetchOptions = { method, headers };
+            if (method !== 'GET') {
+                fetchOptions.body = options.body ? JSON.stringify(options.body) : (method === 'DELETE' ? undefined : '{}');
+            }
+            const res  = await fetch(url, fetchOptions);
+            const data = await res.json().catch(() => ({}));
+            const level = data.level || (res.ok ? 'success' : 'error');
+
+            if (!res.ok || level === 'error') {
+                ctx.showToast('error', data.message || 'Request failed.');
+                if (data.row_id && data.row_html) {
+                    ctx.replaceRow(data.row_id, data.row_html);
+                } else if (data.refresh_table !== false) {
+                    await ctx.refreshTable();
+                }
+                return;
+            }
+
+            ctx.showToast(level, data.message || 'Done.');
+            if (data.removed_row_ids && Array.isArray(data.removed_row_ids)) {
+                data.removed_row_ids.forEach((rowId) => {
+                    document.querySelector(`tr[data-row-id="${rowId}"]`)?.remove();
+                });
+                if (ctx.selectedRows) ctx.selectedRows = [];
+            } else if (data.removed_row_id) {
+                const row = document.querySelector(`tr[data-row-id="${data.removed_row_id}"]`);
+                if (row) row.remove();
+                else await ctx.refreshTable();
+            } else if (data.row_id && data.row_html) {
+                ctx.replaceRow(data.row_id, data.row_html);
+            } else if (data.refresh_table !== false) {
+                await ctx.refreshTable();
+            }
+        } catch (e) {
+            console.error('Sync action failed:', e);
+            ctx.showToast('error', 'Network error. Please try again.');
+        } finally {
+            ctx.setLoading(key, false);
+            if (!Object.values(ctx.loading).some(Boolean)) {
+                ctx.pageLoading = false;
+                ctx.pageLoadingMessage = '';
+            }
+        }
+    },
+    confirmDelete(ctx, key, url, label, ecomName, erpName) {
+        const msg = `Delete this ${label} from ${ecomName}, ${erpName}, and the local database?\n\nThis cannot be undone.`;
+        if (!confirm(msg)) return;
+        ctx.runAction(key, url, { method: 'DELETE', message: 'Deleting…' });
+    },
+    deletableRows(tableBodyId) {
+        const tbody = document.getElementById(tableBodyId);
+        return tbody ? Array.from(tbody.querySelectorAll('tr[data-delete-id]')) : [];
+    },
+    toggleSelectAll(ctx, tableBodyId, checked) {
+        ctx.selectedRows = checked
+            ? this.deletableRows(tableBodyId).map((tr) => tr.dataset.rowId)
+            : [];
+    },
+    toggleRowSelection(ctx, rowId, checked) {
+        if (checked) {
+            ctx.selectedRows = ctx.selectedRows.includes(rowId)
+                ? ctx.selectedRows
+                : [...ctx.selectedRows, rowId];
+        } else {
+            ctx.selectedRows = ctx.selectedRows.filter((id) => id !== rowId);
+        }
+    },
+    allRowsSelected(ctx, tableBodyId) {
+        const rows = this.deletableRows(tableBodyId);
+        return rows.length > 0 && rows.every((tr) => ctx.selectedRows.includes(tr.dataset.rowId));
+    },
+    someRowsSelected(ctx, tableBodyId) {
+        const rows = this.deletableRows(tableBodyId);
+        const count = rows.filter((tr) => ctx.selectedRows.includes(tr.dataset.rowId)).length;
+        return count > 0 && count < rows.length;
+    },
+    confirmBulkDelete(ctx, bulkUrl, label, ecomName, erpName) {
+        const ids = ctx.selectedRows
+            .map((rowId) => document.querySelector(`tr[data-row-id="${rowId}"]`)?.dataset.deleteId)
+            .filter(Boolean);
+        if (ids.length === 0) return;
+        const noun = ids.length === 1 ? label : `${label}s`;
+        const msg = `Delete ${ids.length} selected ${noun} from ${ecomName}, ${erpName}, and the local database?\n\nThis cannot be undone.`;
+        if (!confirm(msg)) return;
+        ctx.runAction('bulk-delete', bulkUrl, {
+            method: 'DELETE',
+            body: { ids },
+            message: `Deleting ${ids.length}…`,
+        });
+    },
+};
+</script>
 </body>
 </html>

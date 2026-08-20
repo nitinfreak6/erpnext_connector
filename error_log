@@ -1,0 +1,102 @@
+[16-Jun-2026 23:53:05 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[16-Jun-2026 23:53:05 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[16-Jun-2026 23:53:05 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[16-Jun-2026 23:53:12 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[16-Jun-2026 23:53:12 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[16-Jun-2026 23:53:12 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[18-Jun-2026 22:22:49 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[18-Jun-2026 22:22:49 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[18-Jun-2026 22:22:49 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[22-Jun-2026 01:38:12 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[22-Jun-2026 01:38:12 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[22-Jun-2026 01:38:12 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:01 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:01 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:01 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:10 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:10 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:10 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:54 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:54 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:54 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:55 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:55 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:55 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:57 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:57 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:50:57 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:51:50 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:51:50 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:51:50 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:51:57 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:51:57 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:51:57 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:52:07 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:52:07 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:52:07 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:52:07 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:52:07 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddo/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:52:07 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddo/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddo/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddo/index.php on line 14
+[23-Jun-2026 03:54:40 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 03:54:40 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 03:54:40 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddoshopify/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 03:57:50 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 03:57:50 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 03:57:50 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddoshopify/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 03:57:52 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 03:57:52 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 03:57:52 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddoshopify/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 04:02:23 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 04:02:23 America/Boise] PHP Warning:  require(/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php): Failed to open stream: No such file or directory in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14
+[23-Jun-2026 04:02:23 America/Boise] PHP Fatal error:  Uncaught Error: Failed opening required '/home3/ankyowmy/public_html/oddoshopify/../vendor/autoload.php' (include_path='.:/opt/cpanel/ea-php83/root/usr/share/pear') in /home3/ankyowmy/public_html/oddoshopify/index.php:14
+Stack trace:
+#0 {main}
+  thrown in /home3/ankyowmy/public_html/oddoshopify/index.php on line 14

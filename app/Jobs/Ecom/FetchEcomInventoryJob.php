@@ -4,8 +4,12 @@ namespace App\Jobs\Ecom;
 
 use App\Models\SyncMapping;
 use App\Models\SyncQueueState;
+use App\Services\ChannelMappingService;
 use App\Services\Ecom\EcomInterface;
 use App\Services\SettingsService;
+use App\Services\Sync\InventoryItemCatalog;
+use App\Services\Sync\InventorySyncService;
+use App\Services\Sync\SyncEntityState;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -34,102 +38,77 @@ class FetchEcomInventoryJob implements ShouldQueue
 
         Log::info("FetchEcomInventoryJob [{$driver}]: fetching inventory levels from Shopify");
 
-        // Resolve Shopify location
-        $locationId = $settings->get('shopify_location_id')
-            ?? app(\App\Services\Shopify\ShopifyInventoryService::class)->getFirstLocationId();
+        $locationId = app(ChannelMappingService::class)->defaultShopifyWarehouseLocationId();
 
         if (!$locationId) {
-            Log::error("FetchEcomInventoryJob [{$driver}]: no shopify_location_id configured — aborting.");
+            Log::error("FetchEcomInventoryJob [{$driver}]: no Shopify warehouse location configured — aborting.");
             $state->update(['notes' => 'error:no_location_id', 'last_poll_at' => now()]);
             return;
         }
 
-        // Collect all inventory_item_ids from stored product mappings.
-        // Each product variant in Shopify has an inventory_item_id — these are stored
-        // in the product metadata when FetchEcomProductsJob runs.
-        $productMappings = SyncMapping::where('entity_type', 'product')
-            ->whereIn('last_sync_direction', ['ecom_to_erp', 'shopify_to_erp', 'shopify_to_odoo'])
-            ->whereNotNull('metadata')
-            ->get();
-
-        $inventoryItemIds = [];
-        $itemToProduct    = [];  // inventory_item_id → ['ecom_id' => ..., 'sku' => ...]
-
-        foreach ($productMappings as $pm) {
-            $meta     = is_array($pm->metadata) ? $pm->metadata : json_decode($pm->metadata ?? '{}', true);
-            $variants = $meta['variants'] ?? [];
-            foreach ($variants as $variant) {
-                $itemId = (string) ($variant['inventory_item_id'] ?? '');
-                $sku    = $variant['sku'] ?? null;
-                if (!$itemId || !$sku) continue;  // no SKU = can't match Odoo product, skip
-                $inventoryItemIds[]    = $itemId;
-                $itemToProduct[$itemId] = [
-                    'ecom_id' => $pm->ecom_id,
-                    'sku'     => $sku,
-                ];
-            }
-        }
+        [$inventoryItemIds, $itemToProduct] = InventoryItemCatalog::collectForDriver($driver, $ecom);
 
         if (empty($inventoryItemIds)) {
-            Log::info("FetchEcomInventoryJob [{$driver}]: no inventory item IDs found in product mappings. Fetch products first.");
-            $state->update(['notes' => 'nothing_changed', 'last_poll_at' => now()]);
+            $productCount = SyncMapping::where('entity_type', 'product')
+                ->where('ecom_driver', $driver)
+                ->whereNotNull('ecom_id')
+                ->count();
+
+            $note = $productCount > 0
+                ? 'error:no_tracked_inventory'
+                : 'error:fetch_products_first';
+
+            Log::info("FetchEcomInventoryJob [{$driver}]: no inventory item IDs found ({$note}).");
+            $state->update(['notes' => $note, 'last_poll_at' => now()]);
             return;
         }
 
-        // Shopify GraphQL caps node lookups at 250 — chunk to be safe
-        $chunks  = array_chunk($inventoryItemIds, 100);
-        $stored  = 0;
-        $skipped = 0;
+        $inventoryItemIds = array_values(array_unique($inventoryItemIds));
+        $chunks           = array_chunk($inventoryItemIds, 100);
+        $stored           = 0;
+        $skipped          = 0;
+
+        $inventorySync = app(InventorySyncService::class);
 
         foreach ($chunks as $chunk) {
             $levels = $ecom->getInventoryLevels($chunk, $locationId);
 
             foreach ($levels as $level) {
-                $inventoryItemId = (string) ($level['inventory_item_id'] ?? '');
-                if (!$inventoryItemId) continue;
+                $inventoryItemId = $inventorySync->resolveSyncEntityEcomId($level);
+                if (!$inventoryItemId) {
+                    continue;
+                }
 
                 $existing = SyncMapping::where('entity_type', 'inventory')
                     ->where('ecom_id', $inventoryItemId)
                     ->where('ecom_driver', $driver)
                     ->first();
 
-                if ($existing) {
-                    $prevMeta = is_array($existing->metadata) ? $existing->metadata : json_decode($existing->metadata ?? '{}', true);
-                    $prevQty  = $prevMeta['available'] ?? $prevMeta['quantity'] ?? null;
-                    $newQty   = $level['available'] ?? $level['quantity'] ?? null;
+                $levelMeta = $inventorySync->buildMappingSourcePayload($level, $locationId, [
+                    'product_ecom_id' => $itemToProduct[$inventoryItemId]['ecom_id'] ?? null,
+                    'sku'             => $itemToProduct[$inventoryItemId]['sku'] ?? null,
+                ]);
 
-                    // Skip if qty unchanged — regardless of status
-                    // (posted + same qty = nothing to do; pending + same qty = already queued)
-                    if ($prevQty !== null && $prevQty == $newQty) {
-                        $skipped++;
-                        continue;
-                    }
-                    // Qty changed — fall through to updateOrCreate to re-queue as pending
-                }
-
-                SyncMapping::updateOrCreate(
-                    [
-                        'entity_type' => 'inventory',
-                        'ecom_id'     => $inventoryItemId,
-                        'ecom_driver' => $driver,
-                    ],
-                    [
-                        'ecom_status'         => 'pending',
-                        'metadata'            => array_merge($level, [
-                            'shopify_location_id' => $locationId,
-                            'product_ecom_id'     => $itemToProduct[$inventoryItemId]['ecom_id'] ?? null,
-                            'sku'                 => $itemToProduct[$inventoryItemId]['sku'] ?? null,
-                        ]),
-                        'last_synced_at'      => now(),
-                        'last_sync_direction' => 'ecom_to_erp',
-                    ]
+                $changed = SyncEntityState::markFetched(
+                    'inventory',
+                    ['ecom_id' => $inventoryItemId, 'ecom_driver' => $driver],
+                    $levelMeta,
+                    $existing,
+                    'ecom_to_erp'
                 );
-                $stored++;
+
+                if ($changed) {
+                    $stored++;
+                } else {
+                    $skipped++;
+                }
             }
         }
 
         $notes = $stored === 0 ? 'nothing_changed' : "fetched:{$stored}";
-        if ($skipped > 0) $notes .= ":skipped:{$skipped}";
+        if ($skipped > 0) {
+            $notes .= ":skipped:{$skipped}";
+        }
 
         $state->update([
             'last_ecom_write_date' => now()->toIso8601String(),

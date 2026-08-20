@@ -2,84 +2,33 @@
 
 namespace App\Services\Shopify;
 
+use App\Services\FieldMappingService;
+use App\Services\SettingsService;
 use Illuminate\Support\Facades\Log;
 
 class ShopifyOrderService
 {
-    public function __construct(private readonly ShopifyGraphQLService $graphql) {}
+    /** Shopify DraftOrderLineItemInput aliases — API glue only, not ERP field names. */
+    private const DRAFT_LINE_FIELD_ALIASES = [
+        'price'               => 'originalUnitPrice',
+        'original_unit_price' => 'originalUnitPrice',
+        'name'                => 'title',
+    ];
 
-    // ── Fragments ────────────────────────────────────────────────────────
+    public function __construct(
+        private readonly ShopifyGraphQLService $graphql,
+        private readonly FieldMappingService $fieldMapping,
+        private readonly SettingsService $settings,
+    ) {}
 
     private function orderFragment(): string
     {
-        return <<<'GQL'
-        fragment OrderFields on Order {
-            id
-            name
-            email
-            createdAt
-            updatedAt
-            cancelledAt
-            displayFinancialStatus
-            displayFulfillmentStatus
-            currencyCode
-            note
-            tags
-            customer {
-                id
-                email
-                firstName
-                lastName
-            }
-            billingAddress {
-                firstName lastName
-                address1 address2
-                city zip
-                countryCodeV2
-                provinceCode
-                phone
-            }
-            shippingAddress {
-                firstName lastName
-                address1 address2
-                city zip
-                countryCodeV2
-                provinceCode
-                phone
-            }
-            lineItems(first: 100) {
-                edges {
-                    node {
-                        id
-                        title
-                        variantTitle
-                        quantity
-                        originalUnitPriceSet { shopMoney { amount currencyCode } }
-                        variant { id sku }
-                        taxLines {
-                            title
-                            ratePercentage
-                            priceSet { shopMoney { amount } }
-                        }
-                    }
-                }
-            }
-            shippingLines(first: 10) {
-                edges {
-                    node {
-                        id
-                        title
-                        originalPriceSet { shopMoney { amount currencyCode } }
-                        carrierIdentifier
-                    }
-                }
-            }
-            totalPriceSet { shopMoney { amount currencyCode } }
-            subtotalPriceSet { shopMoney { amount currencyCode } }
-            totalShippingPriceSet { shopMoney { amount currencyCode } }
-            totalTaxSet { shopMoney { amount currencyCode } }
-        }
-        GQL;
+        return $this->fieldMapping->buildShopifyGraphqlFragment(
+            'sales_order',
+            $this->settings->ecomDriver(),
+            $this->settings->erpDriver(),
+            'Order'
+        );
     }
 
     // ── Public API ───────────────────────────────────────────────────────
@@ -89,11 +38,25 @@ class ShopifyOrderService
      */
     /**
      * Create an order in Shopify via draftOrderCreate + draftOrderComplete.
-     * Converts Odoo order structure to Shopify DraftOrderInput.
+     * Expects a field-config mapped payload (DraftOrderInput shape), not raw Odoo data.
      */
     public function create(array $orderData): array
     {
-        $input = $this->buildDraftOrderInput($orderData);
+        if ($this->looksLikeRawOdooOrder($orderData)) {
+            throw new \RuntimeException(
+                'Sales order push rejected: received raw Odoo order data. '
+                . 'Add active erp→ecom sales order field configs with direction erp_to_ecom in Field Config.'
+            );
+        }
+
+        $input = $this->normalizeDraftOrderInput($orderData);
+
+        if (empty($input['lineItems'])) {
+            throw new \RuntimeException(
+                'Shopify draftOrderCreate: no line items in mapped payload. '
+                . 'Check sales order line field configs (scope=line) and the lineItems container mapping.'
+            );
+        }
 
         $mutation = <<<'GQL'
         mutation draftOrderCreate($input: DraftOrderInput!) {
@@ -117,7 +80,6 @@ class ShopifyOrderService
         $draftOrder = $data['draftOrderCreate']['draftOrder'];
         $draftId    = $draftOrder['id'];
 
-        // Complete the draft order immediately to create a real order
         $completeMutation = <<<'GQL'
         mutation draftOrderComplete($id: ID!) {
             draftOrderComplete(id: $id) {
@@ -137,67 +99,225 @@ class ShopifyOrderService
         }
 
         $order = $completeData['draftOrderComplete']['draftOrder']['order'];
-        return ['id' => $this->fromGid($order['id']), 'name' => $order['name']];
+
+        return [
+            'id'         => $this->fromGid($order['id']),
+            'name'       => $order['name'],
+            'wire_input' => $input,
+        ];
     }
 
     /**
-     * Build Shopify DraftOrderInput from Odoo order structure.
+     * Update an existing Shopify order (note, email, tags).
+     * Line items cannot be changed on completed orders — those fields are ignored.
      */
-    private function buildDraftOrderInput(array $order): array
+    public function update(string|int $orderId, array $orderData): array
+    {
+        if ($this->looksLikeRawOdooOrder($orderData)) {
+            throw new \RuntimeException(
+                'Sales order update rejected: received raw Odoo order data. '
+                . 'Add active erp→ecom sales order field configs with direction erp_to_ecom in Field Config.'
+            );
+        }
+
+        $draftInput = $this->normalizeDraftOrderInput($orderData);
+        $input      = [
+            'id' => $this->toGid('Order', (string) $orderId),
+        ];
+
+        foreach (['email', 'note', 'tags'] as $key) {
+            if (!empty($draftInput[$key])) {
+                $input[$key] = $draftInput[$key];
+            }
+        }
+
+        if (count($input) === 1) {
+            throw new \RuntimeException(
+                'Shopify orderUpdate: no updatable fields in mapped payload (note/email). '
+                . 'Line item changes on existing Shopify orders are not supported via API.'
+            );
+        }
+
+        if (!empty($orderData['lineItems']) || !empty($orderData['line_items'])) {
+            Log::info('ShopifyOrderService::update: line item changes ignored — Shopify does not allow line edits on completed orders.');
+        }
+
+        $mutation = <<<'GQL'
+        mutation orderUpdate($input: OrderInput!) {
+            orderUpdate(input: $input) {
+                order { id name email note }
+                userErrors { field message }
+            }
+        }
+        GQL;
+
+        $data   = $this->graphql->query($mutation, ['input' => $input]);
+        $errors = $this->graphql->extractUserErrors($data, 'orderUpdate');
+
+        if (!empty($errors)) {
+            throw new \RuntimeException('Shopify orderUpdate errors: ' . implode('; ', $errors));
+        }
+
+        $order = $data['orderUpdate']['order'] ?? [];
+
+        return [
+            'id'         => $this->fromGid($order['id'] ?? $this->toGid('Order', (string) $orderId)),
+            'name'       => $order['name'] ?? null,
+            'email'      => $order['email'] ?? null,
+            'note'       => $order['note'] ?? null,
+            'wire_input' => $input,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function normalizeDraftOrderInput(array $payload): array
     {
         $input = [];
 
-        // Note / reference
-        if (!empty($order['name'])) {
-            $input['note'] = 'ERP Order: ' . $order['name'];
-        }
-        if (!empty($order['client_order_ref'])) {
-            $input['poNumber'] = (string) $order['client_order_ref'];
+        foreach (['email', 'note', 'poNumber', 'phone'] as $key) {
+            $value = $this->pickPayloadScalar($payload, $key);
+
+            if ($value !== null) {
+                $input[$key] = $value;
+            }
         }
 
-        // Customer — resolve by email if available
-        if (!empty($order['partner_id'])) {
-            $email = is_array($order['partner_id']) ? ($order['partner_id'][1] ?? null) : null;
-            if ($email && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        if (!empty($input['email'])) {
+            $email = (string) $input['email'];
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)
+                && preg_match('/[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}/', $email, $matches)) {
+                $email = $matches[0];
+            }
+
+            if (filter_var($email, FILTER_VALIDATE_EMAIL)) {
                 $input['email'] = $email;
+            } else {
+                unset($input['email']);
             }
         }
 
-        // Line items from enriched order_line data
+        $rawLines = null;
+        foreach (['lineItems', 'line_items'] as $key) {
+            if (!empty($payload[$key]) && is_array($payload[$key])) {
+                $rawLines = $payload[$key];
+                break;
+            }
+        }
+
         $lineItems = [];
-        foreach ($order['order_line'] ?? [] as $line) {
-            if (!is_array($line)) continue;
-
-            $qty      = (float) ($line['product_uom_qty'] ?? 1);
-            $price    = (float) ($line['price_unit'] ?? 0);
-            $title    = $line['name'] ?? 'Product';
-            $sku      = null;
-
-            // product_id = [id, "name"] from Odoo
-            if (is_array($line['product_id'] ?? null)) {
-                $sku = $line['product_id'][1] ?? null;
+        foreach ($rawLines ?? [] as $index => $line) {
+            if (!is_array($line)) {
+                continue;
             }
 
-            $item = [
-                'title'    => $title,
-                'quantity' => (int) max(1, $qty),
-                'originalUnitPrice' => number_format($price, 2, '.', ''),
-            ];
-
-            if ($sku) {
-                $item['sku'] = $sku;
+            $normalized = $this->normalizeDraftOrderLineItem($line, (int) $index);
+            if ($normalized !== null) {
+                $lineItems[] = $normalized;
             }
-
-            $lineItems[] = $item;
         }
 
-        if (empty($lineItems)) {
-            throw new \RuntimeException('Shopify draftOrderCreate: no line items found in order. Ensure order lines are enriched before calling create().');
+        if ($lineItems !== []) {
+            $input['lineItems'] = $lineItems;
         }
-
-        $input['lineItems'] = $lineItems;
 
         return $input;
+    }
+
+    /**
+     * Pass through field-config line item keys — no Odoo/ERP field fallbacks.
+     *
+     * @param  array<string, mixed>  $line
+     * @return array<string, mixed>|null
+     */
+    private function normalizeDraftOrderLineItem(array $line, int $index): ?array
+    {
+        if ($line === []) {
+            return null;
+        }
+
+        $item = [];
+        foreach ($line as $key => $value) {
+            if (!is_string($key) || str_starts_with($key, '_') || $value === null || $value === '') {
+                continue;
+            }
+
+            $shopifyKey = self::DRAFT_LINE_FIELD_ALIASES[$key] ?? $key;
+            $item[$shopifyKey] = $value;
+        }
+
+        if (empty($item['title'])) {
+            throw new \RuntimeException(
+                'Shopify draftOrderCreate: line item #' . ($index + 1) . ' missing title in mapped payload. '
+                . 'Add a line-scope field config for lineItems.title (or line_items.title).'
+            );
+        }
+
+        if (!isset($item['quantity']) || !is_numeric($item['quantity'])) {
+            throw new \RuntimeException(
+                'Shopify draftOrderCreate: line item #' . ($index + 1) . ' missing quantity in mapped payload. '
+                . 'Add a line-scope field config for lineItems.quantity (or line_items.quantity). '
+                . 'Wrong paths like line_items1.quantity are rejected — fix the ecom_field prefix.'
+            );
+        }
+
+        $item['title']    = trim(strip_tags((string) $item['title']));
+        $item['quantity'] = (int) max(1, (float) $item['quantity']);
+
+        if (isset($item['originalUnitPrice']) && $item['originalUnitPrice'] !== '') {
+            $item['originalUnitPrice'] = number_format((float) $item['originalUnitPrice'], 2, '.', '');
+        }
+
+        if (isset($item['sku'])) {
+            $item['sku'] = (string) $item['sku'];
+        }
+
+        return $item;
+    }
+
+    /** @param  array<string, mixed>  $payload */
+    private function pickPayloadScalar(array $payload, string $key): mixed
+    {
+        $candidates = match ($key) {
+            'poNumber' => ['poNumber', 'po_number'],
+            default    => [$key],
+        };
+
+        foreach ($candidates as $candidate) {
+            $value = $payload[$candidate] ?? null;
+            if ($value !== null && $value !== '' && $value !== false) {
+                return $this->scalarFromMappedValue($value);
+            }
+        }
+
+        return null;
+    }
+
+    private function scalarFromMappedValue(mixed $value): mixed
+    {
+        if (is_array($value) && array_key_exists(1, $value)) {
+            return $value[1];
+        }
+
+        return $value;
+    }
+
+    /** @param  array<string, mixed>  $data */
+    private function looksLikeRawOdooOrder(array $data): bool
+    {
+        return isset($data['order_line'])
+            || isset($data['partner_id'])
+            || isset($data['amount_total'])
+            || isset($data['partner_invoice_id']);
+    }
+
+    /**
+     * @deprecated Raw Odoo conversion — use field-config mapped payloads instead.
+     */
+    private function buildDraftOrderInput(array $order): array
+    {
+        return $this->normalizeDraftOrderInput($order);
     }
 
     public function get(string $orderId): ?array
@@ -332,86 +452,62 @@ class ShopifyOrderService
         return $data['orderCancel'] ?? [];
     }
 
-    // ── Normalizer ───────────────────────────────────────────────────────
+    // ── GraphQL decode (structural only — field sync is config-driven) ───
 
     /**
-     * Normalize GraphQL order to REST-compatible shape.
-     * Keeps OrderSyncService, FulfillmentSyncService unchanged.
+     * Decode GraphQL order → storable JSON (camelCase, GIDs → ids, edges flattened).
+     * Which fields map to ERP is defined in product_field_configs — same as products.
      */
-    private function normalizeOrder(array $o): array
+    private function decodeGraphqlOrder(array $node): array
     {
-        $lineItems = array_map(function ($edge) {
-            $n = $edge['node'];
-            return [
-                'id'            => $this->fromGid($n['id']),
-                'title'         => $n['title'],
-                'variant_title' => $n['variantTitle'] ?? '',
-                'quantity'      => $n['quantity'],
-                'price'         => $n['originalUnitPriceSet']['shopMoney']['amount'] ?? '0.00',
-                'variant_id'    => isset($n['variant']['id']) ? $this->fromGid($n['variant']['id']) : null,
-                'sku'           => $n['variant']['sku'] ?? '',
-                'tax_lines'     => array_map(fn($t) => [
-                    'title' => $t['title'],
-                    'rate'  => $t['ratePercentage'],
-                    'price' => $t['priceSet']['shopMoney']['amount'] ?? '0',
-                ], $n['taxLines'] ?? []),
-            ];
-        }, $o['lineItems']['edges'] ?? []);
+        $decoded = $this->decodeGraphqlValue($node);
 
-        $shippingLines = array_map(function ($edge) {
-            $n = $edge['node'];
-            return [
-                'id'    => $this->fromGid($n['id']),
-                'title' => $n['title'],
-                'price' => $n['originalPriceSet']['shopMoney']['amount'] ?? '0.00',
-            ];
-        }, $o['shippingLines']['edges'] ?? []);
-
-        $billing  = $o['billingAddress']  ?? [];
-        $shipping = $o['shippingAddress'] ?? [];
-
-        return [
-            'id'               => $this->fromGid($o['id']),
-            'name'             => $o['name'],
-            'email'            => $o['email'] ?? $o['customer']['email'] ?? '',
-            'created_at'       => $o['createdAt'],
-            'updated_at'       => $o['updatedAt'],
-            'cancelled_at'     => $o['cancelledAt'],
-            'financial_status' => strtolower($o['displayFinancialStatus'] ?? ''),
-            'fulfillment_status' => strtolower($o['displayFulfillmentStatus'] ?? ''),
-            'currency'         => $o['currencyCode'],
-            'note'             => $o['note'] ?? '',
-            'tags'             => $o['tags'] ?? '',
-            'total_price'      => $o['totalPriceSet']['shopMoney']['amount'] ?? '0.00',
-            'subtotal_price'   => $o['subtotalPriceSet']['shopMoney']['amount'] ?? '0.00',
-            'total_tax'        => $o['totalTaxSet']['shopMoney']['amount'] ?? '0.00',
-            'line_items'       => $lineItems,
-            'shipping_lines'   => $shippingLines,
-            'billing_address'  => $this->normalizeAddress($billing),
-            'shipping_address' => $this->normalizeAddress($shipping),
-            'customer'         => $o['customer'] ? [
-                'id'         => $this->fromGid($o['customer']['id']),
-                'email'      => $o['customer']['email'] ?? '',
-                'first_name' => $o['customer']['firstName'] ?? '',
-                'last_name'  => $o['customer']['lastName']  ?? '',
-            ] : null,
-        ];
+        return is_array($decoded) ? $this->enrichFetchedOrder($decoded) : [];
     }
 
-    private function normalizeAddress(array $addr): array
+    /** Sync cursors only — not business field mapping. */
+    private function enrichFetchedOrder(array $order): array
     {
-        if (empty($addr)) return [];
-        return [
-            'first_name'    => $addr['firstName']    ?? '',
-            'last_name'     => $addr['lastName']     ?? '',
-            'address1'      => $addr['address1']     ?? '',
-            'address2'      => $addr['address2']     ?? '',
-            'city'          => $addr['city']         ?? '',
-            'zip'           => $addr['zip']          ?? '',
-            'country_code'  => $addr['countryCodeV2'] ?? '',
-            'province_code' => $addr['provinceCode'] ?? '',
-            'phone'         => $addr['phone']        ?? '',
-        ];
+        if (!empty($order['updatedAt'])) {
+            $order['updated_at'] = $order['updatedAt'];
+        }
+
+        if (!empty($order['createdAt'])) {
+            $order['created_at'] = $order['createdAt'];
+        }
+
+        return $order;
+    }
+
+    private function decodeGraphqlValue(mixed $value): mixed
+    {
+        if (is_string($value) && str_starts_with($value, 'gid://')) {
+            return $this->fromGid($value);
+        }
+
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        if (array_key_exists('edges', $value) && is_array($value['edges'])) {
+            return array_map(
+                fn ($edge) => $this->decodeGraphqlValue($edge['node'] ?? $edge),
+                $value['edges']
+            );
+        }
+
+        $out = [];
+        foreach ($value as $key => $item) {
+            $out[$key] = $this->decodeGraphqlValue($item);
+        }
+
+        return $out;
+    }
+
+    /** @deprecated Alias for decodeGraphqlOrder */
+    private function normalizeOrder(array $o): array
+    {
+        return $this->decodeGraphqlOrder($o);
     }
 
     // ── GID helpers ──────────────────────────────────────────────────────

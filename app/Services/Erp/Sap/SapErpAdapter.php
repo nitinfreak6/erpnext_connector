@@ -79,6 +79,16 @@ class SapErpAdapter implements ErpInterface
         return (int) max(0, ($quant['quantity'] ?? 0) - ($quant['reserved_quantity'] ?? 0));
     }
 
+    public function updateInventoryLevel(array $payload): void
+    {
+        throw new \RuntimeException('SapErpAdapter::updateInventoryLevel() not implemented.');
+    }
+
+    public function resolveProductIdByReference(string $reference): ?int
+    {
+        throw new \RuntimeException('SapErpAdapter::resolveProductIdByReference() not implemented.');
+    }
+
     // ── Orders ───────────────────────────────────────────────────────────
 
     public function getOrdersModifiedSince(string $writeDate): array
@@ -146,6 +156,25 @@ class SapErpAdapter implements ErpInterface
     public function resolveState(int $countryId, string $code): ?int
     {
         throw new \RuntimeException('SapErpAdapter::resolveState() not implemented.');
+    }
+
+    public function prepareProductWriteValue(string $field, mixed $value): mixed
+    {
+        return $value;
+    }
+
+    public function extractRelationId(mixed $value): int|string|null
+    {
+        if ($value === null || $value === '' || $value === false) {
+            return null;
+        }
+
+        return is_numeric($value) ? (is_int($value) ? $value : (int) $value) : (is_string($value) ? $value : null);
+    }
+
+    public function resolvePartnerReference(string $role, mixed $value): int|string|null
+    {
+        return is_scalar($value) && $value !== '' ? $value : null;
     }
 
     // ── Normalisation ────────────────────────────────────────────────────

@@ -4,9 +4,8 @@ use App\Services\SettingsService;
 use Illuminate\Support\Facades\Schedule;
 
 // ── Lazy settings helpers ─────────────────────────────────────────────────────
-// Resolved lazily so the schedule bootstrap doesn't fail before migrations run.
 
-$isEnabled = fn(string $method) => function () use ($method) {
+$isEnabled = fn (string $method) => function () use ($method) {
     try {
         return app(SettingsService::class)->{$method}();
     } catch (\Throwable) {
@@ -14,82 +13,61 @@ $isEnabled = fn(string $method) => function () use ($method) {
     }
 };
 
-$productEnabled   = $isEnabled('isProductSyncEnabled');
-$inventoryEnabled = $isEnabled('isInventorySyncEnabled');
-$ordersEnabled    = $isEnabled('isSalesOrderSyncEnabled');
-$customersEnabled = $isEnabled('isCustomerSyncEnabled');
-$amazonEnabled    = fn() => app(SettingsService::class)->isAmazonChannelEnabled()
-                         && app(SettingsService::class)->isProductSyncEnabled();
+$anySyncEnabled = function () {
+    try {
+        $s = app(SettingsService::class);
 
-// ── Products ──────────────────────────────────────────────────────────────────
-// Incremental: only new/updated products fetched. Cursor advances each run.
-Schedule::command('sync:products')
+        return $s->isProductSyncEnabled()
+            || $s->isInventorySyncEnabled()
+            || $s->isCustomerSyncEnabled()
+            || $s->isSalesOrderSyncEnabled();
+    } catch (\Throwable) {
+        return false;
+    }
+};
+
+$amazonEnabled = fn () => app(SettingsService::class)->isAmazonChannelEnabled()
+    && app(SettingsService::class)->isProductSyncEnabled();
+
+// ── Full sync pipeline (UI-equivalent: fetch + post per entity) ───────────────
+// Order: products → inventory → customers → orders → dispatch
+// Respects *_sync_enabled toggles and *_sync_mode direction in Global Settings.
+Schedule::command('sync:all')
     ->everyFiveMinutes()
-    ->withoutOverlapping(10)
+    ->withoutOverlapping(30)
     ->runInBackground()
-    ->skip(fn() => !$productEnabled())
-    ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('Cron failed: sync:products'));
+    ->skip(fn () => !$anySyncEnabled())
+    ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('Cron failed: sync:all'));
 
-// ── Inventory ─────────────────────────────────────────────────────────────────
-// Incremental: write_date cursor ensures only changed stock quants are fetched.
-Schedule::command('sync:inventory')
-    ->everyFiveMinutes()
-    ->withoutOverlapping(10)
-    ->runInBackground()
-    ->skip(fn() => !$inventoryEnabled())
-    ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('Cron failed: sync:inventory'));
-
-// ── Orders ────────────────────────────────────────────────────────────────────
-// Incremental: last_ecom_write_date / last_erp_write_date cursors.
-// Orders are time-sensitive — run every 5 minutes.
-Schedule::command('sync:orders')
-    ->everyFiveMinutes()
-    ->withoutOverlapping(10)
-    ->runInBackground()
-    ->skip(fn() => !$ordersEnabled())
-    ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('Cron failed: sync:orders'));
-
-// ── Customers ─────────────────────────────────────────────────────────────────
-// Incremental: last_ecom_write_date cursor. Less frequent than products/orders.
-Schedule::command('sync:customers')
-    ->everyFifteenMinutes()
-    ->withoutOverlapping(20)
-    ->runInBackground()
-    ->skip(fn() => !$customersEnabled())
-    ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('Cron failed: sync:customers'));
-
-// ── Amazon — Products ─────────────────────────────────────────────────────────
-// Runs after products are fetched. Uses same ERP cursor.
+// ── Amazon (separate channel — unchanged) ─────────────────────────────────────
 Schedule::command('sync:amazon-products')
     ->hourly()
     ->withoutOverlapping(30)
     ->runInBackground()
-    ->skip(fn() => !$amazonEnabled())
-    ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('Cron failed: sync:amazon-products'));
+    ->skip(fn () => !$amazonEnabled())
+    ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('Cron failed: sync:amazon-products'));
 
-// ── Amazon — Inventory ────────────────────────────────────────────────────────
 Schedule::command('sync:amazon-inventory')
     ->everyFifteenMinutes()
     ->withoutOverlapping(10)
     ->runInBackground()
-    ->skip(fn() => !$amazonEnabled())
-    ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('Cron failed: sync:amazon-inventory'));
+    ->skip(fn () => !$amazonEnabled())
+    ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('Cron failed: sync:amazon-inventory'));
 
-// ── Amazon — Orders ───────────────────────────────────────────────────────────
 Schedule::command('sync:amazon-orders')
     ->everyFiveMinutes()
     ->withoutOverlapping(10)
     ->runInBackground()
-    ->skip(fn() => !$ordersEnabled() || !app(SettingsService::class)->isAmazonChannelEnabled())
-    ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('Cron failed: sync:amazon-orders'));
+    ->skip(fn () => !app(SettingsService::class)->isSalesOrderSyncEnabled()
+        || !app(SettingsService::class)->isAmazonChannelEnabled())
+    ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('Cron failed: sync:amazon-orders'));
 
 // ── Maintenance ───────────────────────────────────────────────────────────────
 Schedule::command('logs:prune --days=30')
     ->weekly()
     ->runInBackground();
-	
-	// Runs every hour: checks for items pending > 8 hours and PHP errors in the last hour.
+
 Schedule::command('alerts:send-pending')
     ->hourly()
     ->runInBackground()
-    ->onFailure(fn() => \Illuminate\Support\Facades\Log::error('Cron failed: alerts:send-pending'));
+    ->onFailure(fn () => \Illuminate\Support\Facades\Log::error('Cron failed: alerts:send-pending'));

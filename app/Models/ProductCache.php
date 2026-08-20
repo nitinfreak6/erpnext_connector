@@ -56,9 +56,60 @@ class ProductCache extends Model
     ];
 
     const STATUS_PENDING = 'pending';
+    const STATUS_UPDATED = 'updated';
     const STATUS_SENT    = 'sent';
     const STATUS_FAILED  = 'failed';
     const STATUS_SKIPPED = 'skipped';
+
+    /** Statuses eligible for push (includes legacy failed — stored as pending with message). */
+    public const PUSHABLE_STATUSES = [
+        self::STATUS_PENDING,
+        self::STATUS_UPDATED,
+        self::STATUS_FAILED,
+    ];
+
+    public static function normalizeDisplayStatus(?string $status): string
+    {
+        if ($status === null || $status === '') {
+            return self::STATUS_PENDING;
+        }
+
+        if (in_array($status, [self::STATUS_SENT, 'synced', 'posted'], true)) {
+            return self::STATUS_SENT;
+        }
+
+        if ($status === self::STATUS_UPDATED) {
+            return self::STATUS_UPDATED;
+        }
+
+        if (in_array($status, [self::STATUS_PENDING, self::STATUS_FAILED], true)) {
+            return self::STATUS_PENDING;
+        }
+
+        if ($status === self::STATUS_SKIPPED) {
+            return self::STATUS_SENT;
+        }
+
+        return self::STATUS_PENDING;
+    }
+
+    public static function displayLabel(?string $status): string
+    {
+        return match (self::normalizeDisplayStatus($status)) {
+            self::STATUS_SENT    => 'Sent',
+            self::STATUS_UPDATED => 'Updated',
+            default              => 'Pending',
+        };
+    }
+
+    public static function displayBadgeClass(?string $status): string
+    {
+        return match (self::normalizeDisplayStatus($status)) {
+            self::STATUS_SENT    => 'bg-emerald-100 text-emerald-700',
+            self::STATUS_UPDATED => 'bg-blue-100 text-blue-700',
+            default              => 'bg-amber-100 text-amber-700',
+        };
+    }
 
     // ── Column existence cache ────────────────────────────────────────────
     // Checked once per request, avoids repeated SHOW COLUMNS calls.
@@ -107,12 +158,20 @@ class ProductCache extends Model
         return $this->attributes['shopify_status'] ?? null;
     }
 
-    public function getErpIdAttribute(): ?int
+    public function getErpIdAttribute(): int|string|null
     {
         if (static::hasEcomColumns() && isset($this->attributes['erp_id'])) {
-            return (int) $this->attributes['erp_id'];
+            $value = $this->attributes['erp_id'];
+            return is_numeric($value) ? (int) $value : (string) $value;
         }
-        return isset($this->attributes['odoo_id']) ? (int) $this->attributes['odoo_id'] : null;
+
+        if (!isset($this->attributes['odoo_id'])) {
+            return null;
+        }
+
+        $value = $this->attributes['odoo_id'];
+
+        return is_numeric($value) ? (int) $value : (string) $value;
     }
 
     public function getEcomProductIdAttribute(): ?string
@@ -137,9 +196,10 @@ class ProductCache extends Model
 
     public function getEcomMessageAttribute(): ?string
     {
-        if (static::hasEcomColumns() && isset($this->attributes['ecom_message'])) {
-            return $this->attributes['ecom_message'];
+        if (static::hasEcomColumns()) {
+            return $this->attributes['ecom_message'] ?? null;
         }
+
         return $this->attributes['shopify_message'] ?? null;
     }
 
@@ -192,8 +252,9 @@ class ProductCache extends Model
         return static::where($col, '!=', 'sent')
             ->orWhereNull($col)
             ->pluck($erpCol)
-            ->map(fn($id) => (int) $id)
-            ->filter()
+            ->map(fn ($id) => is_numeric($id) ? (int) $id : (string) $id)
+            ->filter(fn ($id) => $id !== 0 && $id !== '0' && $id !== '')
+            ->values()
             ->toArray();
     }
 

@@ -10,8 +10,6 @@
     $cards = [
         ['label' => $ecomDisplayName . ' Products',  'value' => $stats['shopify']['products'],  'color' => 'indigo',  'icon' => 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'],
         ['label' => $ecomDisplayName . ' Orders',    'value' => $stats['shopify']['orders'],    'color' => 'violet',  'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'],
-        ['label' => 'Amazon Products',   'value' => $stats['amazon']['products'],   'color' => 'amber',   'icon' => 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z'],
-        ['label' => 'Amazon Orders',     'value' => $stats['amazon']['orders'],     'color' => 'orange',  'icon' => 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12h12l1-12'],
     ];
     @endphp
 

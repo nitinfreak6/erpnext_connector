@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Models\EntityDefinition;
 use App\Services\ConnectorRegistry;
 use App\Services\Ecom\EcomInterface;
 use App\Services\Erp\ErpInterface;
@@ -17,6 +18,8 @@ class AppServiceProvider extends ServiceProvider
         // ConnectorRegistry. To add an ERP/Ecom you edit that one config file —
         // no change here. See config/connectors.php for the contract.
         $this->app->singleton(ConnectorRegistry::class);
+        $this->app->singleton(\App\Services\Odoo\OdooService::class);
+        $this->app->singleton(\App\Services\Erp\ErpNext\ErpNextService::class);
 
         // ── ERP driver binding ──────────────────────────────────────────
         $this->app->bind(ErpInterface::class, function ($app) {
@@ -77,6 +80,12 @@ class AppServiceProvider extends ServiceProvider
                 $view->with('featureOrders',          $settings->isSalesOrderSyncEnabled());
                 $view->with('featureInventory',       $settings->isInventorySyncEnabled());
                 $view->with('featureCustomers',       $settings->isCustomerSyncEnabled());
+                $view->with('sidebarMappingTypes',    $settings->sidebarMappingTypes());
+                $view->with('fieldConfigEntities',    EntityDefinition::where('is_active', true)
+                    ->orderBy('sort_order')
+                    ->get()
+                    ->filter(fn ($entity) => $settings->isEntitySyncEnabled($entity->entity_type))
+                    ->values());
             } catch (\Throwable) {
                 $view->with('appName',                config('app.name', 'Connector'));
                 $view->with('erpDisplayName',         'ERP');
@@ -85,6 +94,8 @@ class AppServiceProvider extends ServiceProvider
                 $view->with('featureOrders',          true);
                 $view->with('featureInventory',       true);
                 $view->with('featureCustomers',       true);
+                $view->with('sidebarMappingTypes',    []);
+                $view->with('fieldConfigEntities',    collect());
             }
         });
     }

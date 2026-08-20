@@ -43,6 +43,7 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
     // ── Products (feature flag: products) ────────────────────────────────
     Route::middleware('feature:products')->prefix('products')->name('.products')->group(function () {
         Route::get('/',                 [ProductsController::class, 'index'])      ->name('');
+        Route::get('/rows',             [ProductsController::class, 'rows'])       ->name('.rows');
         Route::get('/{odooId}',         [ProductsController::class, 'show'])       ->name('.show');
         Route::post('/fetch',           [ProductsController::class, 'fetch'])      ->name('.fetch');
         Route::post('/pull',            [ProductsController::class, 'pull'])       ->name('.pull');
@@ -52,12 +53,15 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
         Route::post('/{ecomId}/push-to-erp', [ProductsController::class, 'pushSingleToErp']) ->name('.push-single-to-erp');
         Route::post('/{odooId}/post',   [ProductsController::class, 'postSingle']) ->name('.post-single');
         Route::patch('/{odooId}/refresh',[ProductsController::class, 'refresh'])   ->name('.refresh');
+		Route::delete('/bulk',           [ProductsController::class, 'destroyBulk'])->name('.destroy-bulk');
+		Route::delete('/{id}',           [ProductsController::class, 'destroy'])  ->name('.destroy');
     });
 
     // ── Orders (feature flag: orders) ────────────────────────────────────
     Route::middleware('feature:orders')->group(function () {
         Route::get('/orders', [OrdersController::class, 'index'])->name('.orders');
         Route::prefix('orders')->name('.orders')->group(function () {
+            Route::get('/rows',                [OrdersController::class, 'rows'])              ->name('.rows');
             Route::post('/fetch',                [OrdersController::class, 'fetch'])         ->name('.fetch');
             Route::post('/pull',                 [OrdersController::class, 'pull'])          ->name('.pull');
             Route::post('/post-sales',           [OrdersController::class, 'postSales'])     ->name('.post-sales');
@@ -65,22 +69,31 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
             Route::post('/fetch-dispatch',       [OrdersController::class, 'fetchDispatch']) ->name('.fetch-dispatch');
             Route::post('/post-dispatch',        [OrdersController::class, 'postDispatch'])  ->name('.post-dispatch');
             Route::get('/{erpId}/sales-info',    [OrdersController::class, 'salesInfo'])     ->name('.sales-info');
+			
+			Route::get('/by-ecom/{ecomId}/sales-info', [OrdersController::class, 'salesInfoByEcom'])->name('.sales-info-by-ecom');
             Route::get('/{erpId}/dispatch-info', [OrdersController::class, 'dispatchInfo'])  ->name('.dispatch-info');
             Route::get('/{erpId}',               [OrdersController::class, 'show'])          ->name('.show');
             Route::post('/{erpId}/push',         [OrdersController::class, 'push'])          ->name('.push');
             Route::post('/{ecomId}/sync-back',   [OrdersController::class, 'syncBack'])      ->name('.sync-back');
 			Route::post('/{erpId}/fetch-dispatch',    [OrdersController::class, 'fetchDispatchSingle']) ->name('.fetch-dispatch-single');
             Route::post('/{erpId}/post-dispatch',     [OrdersController::class, 'postDispatchSingle'])  ->name('.post-dispatch-single');
+			Route::delete('/dispatch/{id}',           [OrdersController::class, 'destroyDispatch'])   ->name('.destroy-dispatch');
+			Route::delete('/bulk',                    [OrdersController::class, 'destroyBulk'])       ->name('.destroy-bulk');
+			Route::delete('/{id}',                    [OrdersController::class, 'destroy'])           ->name('.destroy');
         });
     });
 
     // ── Inventory (feature flag: inventory) ──────────────────────────────
     Route::middleware('feature:inventory')->group(function () {
         Route::get('/inventory',                     [InventoryController::class, 'index'])           ->name('.inventory');
+		Route::get('/inventory/rows',                [InventoryController::class, 'rows'])            ->name('.inventory.rows');
+
         Route::post('/inventory/fetch-stock',        [InventoryController::class, 'fetchStock'])      ->name('.inventory.fetch-stock');
         Route::post('/inventory/post-stock',         [InventoryController::class, 'postStock'])       ->name('.inventory.post-stock');
         Route::post('/inventory/{id}/fetch-stock',[InventoryController::class, 'fetchStockSingle'])->name('.inventory.fetch-stock-single');
         Route::post('/inventory/{id}/post-stock', [InventoryController::class, 'postStockSingle']) ->name('.inventory.post-stock-single');
+		Route::delete('/inventory/bulk',          [InventoryController::class, 'destroyBulk'])     ->name('.inventory.destroy-bulk');
+		Route::delete('/inventory/{id}',          [InventoryController::class, 'destroy'])         ->name('.inventory.destroy');
         Route::get('/inventory/{id}/stock-info',  [InventoryController::class, 'stockInfo'])       ->name('.inventory.stock-info');
     });
 
@@ -99,20 +112,32 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
 
     // ── Field Config ─────────────────────────────────────────────────────
     Route::prefix('product-field-config')->name('.product-field-config')->middleware('role:manage-settings')->group(function () {
-        Route::get('/',                   [ProductFieldConfigController::class, 'index'])          ->name('.index');
-        Route::post('/',                  [ProductFieldConfigController::class, 'store'])          ->name('.store');
-        Route::put('/{config}',           [ProductFieldConfigController::class, 'update'])         ->name('.update');
-        Route::delete('/{config}',        [ProductFieldConfigController::class, 'destroy'])        ->name('.destroy');
-        Route::patch('/{config}/toggle',  [ProductFieldConfigController::class, 'toggle'])         ->name('.toggle');
-        Route::post('/fetch-ecom-fields', [ProductFieldConfigController::class, 'fetchEcomFields'])->name('.fetch-ecom-fields');
-        Route::post('/fetch-erp-fields',  [ProductFieldConfigController::class, 'fetchErpFields']) ->name('.fetch-erp-fields');
-    });
+    
+		// ── Static routes FIRST (before any {config} wildcard) ──
+		Route::get('/',                   [ProductFieldConfigController::class, 'index'])          ->name('.index');
+		Route::post('/',                  [ProductFieldConfigController::class, 'store'])          ->name('.store');
+		Route::post('/fetch-ecom-fields', [ProductFieldConfigController::class, 'fetchEcomFields'])->name('.fetch-ecom-fields');
+		Route::post('/fetch-erp-fields',  [ProductFieldConfigController::class, 'fetchErpFields']) ->name('.fetch-erp-fields');
+
+		// ── Wildcard {config} routes AFTER static routes ──
+		Route::get('/{config}',           [ProductFieldConfigController::class, 'show'])           ->name('.show');   // add if needed
+		Route::put('/{config}',           [ProductFieldConfigController::class, 'update'])         ->name('.update');
+		Route::delete('/{config}',        [ProductFieldConfigController::class, 'destroy'])        ->name('.destroy');
+		Route::patch('/{config}/toggle',  [ProductFieldConfigController::class, 'toggle'])         ->name('.toggle');
+	});
 
     // ── Customers (feature flag: customers) ──────────────────────────────
     Route::middleware('feature:customers')->prefix('customers')->name('.customers')->group(function () {
-        Route::get('/',       [CustomersController::class, 'index'])->name('');
-        Route::post('/fetch', [CustomersController::class, 'fetch'])->name('.fetch');
-        Route::post('/pull',  [CustomersController::class, 'pull'])->name('.pull');
+        Route::get('/',                    [CustomersController::class, 'index'])->name('');
+        Route::get('/rows',                [CustomersController::class, 'rows'])->name('.rows');
+        Route::post('/fetch',              [CustomersController::class, 'fetch'])->name('.fetch');
+        Route::post('/pull',               [CustomersController::class, 'pull'])->name('.pull');
+        Route::post('/post',               [CustomersController::class, 'postCustomers'])->name('.post');
+        Route::post('/{id}/fetch',         [CustomersController::class, 'fetchCustomerSingle'])->name('.fetch-single');
+        Route::post('/{id}/post',          [CustomersController::class, 'postCustomerSingle'])->name('.post-single');
+		Route::delete('/bulk',             [CustomersController::class, 'destroyBulk'])->name('.destroy-bulk');
+		Route::get('/{id}/info',           [CustomersController::class, 'customerInfo'])->name('.info');
+		Route::delete('/{id}',             [CustomersController::class, 'destroy'])->name('.destroy');
     });
 
     // ── Logs ─────────────────────────────────────────────────────────────
@@ -131,9 +156,13 @@ Route::middleware(['auth'])->prefix('dashboard')->name('dashboard')->group(funct
 
     // ── Settings (admin only) ─────────────────────────────────────────────
     Route::middleware('role:manage-settings')->group(function () {
-        Route::get('/settings',                  [SettingsController::class, 'index']) ->name('.settings');
-        Route::put('/settings',                  [SettingsController::class, 'update'])->name('.settings.update');
-        Route::get('/settings/{setting}/reveal', [SettingsController::class, 'reveal'])->name('.settings.reveal');
+        Route::get('/settings/erp',              [SettingsController::class, 'erp'])       ->name('.settings.erp');
+        Route::put('/settings/erp',              [SettingsController::class, 'update'])  ->name('.settings.erp.update');
+        Route::get('/settings/ecom',             [SettingsController::class, 'ecom'])      ->name('.settings.ecom');
+        Route::put('/settings/ecom',             [SettingsController::class, 'update'])  ->name('.settings.ecom.update');
+        Route::get('/settings',                  [SettingsController::class, 'index'])     ->name('.settings');
+        Route::put('/settings',                  [SettingsController::class, 'update'])  ->name('.settings.update');
+        Route::get('/settings/{setting}/reveal',  [SettingsController::class, 'reveal'])  ->name('.settings.reveal');
     });
 
     // ── Users (admin only) ───────────────────────────────────────────────

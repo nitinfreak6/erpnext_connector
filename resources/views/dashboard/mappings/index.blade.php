@@ -41,7 +41,7 @@
     <form method="POST" action="{{ route('dashboard.mappings.import', $type) }}">
         @csrf
         <textarea name="json_data" rows="4"
-                  placeholder='[{"odoo_id":"5","odoo_label":"WH/Stock","external_id":"69188747343","external_label":"Main Warehouse","channel":"shopify"}]'
+                  placeholder='[{"odoo_id":"5","odoo_label":"WH/Stock","external_id":"gid://shopify/TaxonomyCategory/aa-1-13-8","external_label":"Shorts","channel":"shopify"}]'
                   class="w-full text-sm font-mono border border-amber-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-amber-300 outline-none bg-white"></textarea>
         <div class="flex justify-end gap-2 mt-2">
             <button type="button" @click="showImport = false" class="text-sm text-gray-500 px-3 py-1.5">Cancel</button>
@@ -89,11 +89,9 @@
                 <th class="text-left px-4 py-3">Channel</th>
                 <th class="text-left px-4 py-3">{{ $erpDisplayName }} ID</th>
                 <th class="text-left px-4 py-3">{{ $erpDisplayName }} Label</th>
-                <th class="text-left px-4 py-3">{{ $erpDisplayName }} Value Field</th>
                 <th class="px-4 py-3 text-gray-300">→</th>
                 <th class="text-left px-4 py-3">External ID</th>
                 <th class="text-left px-4 py-3">External Label</th>
-                <th class="text-left px-4 py-3">Ext. Value Field</th>
                 <th class="text-left px-4 py-3">Default</th>
                 <th class="text-left px-4 py-3">Status</th>
                 <th class="text-right px-4 py-3">Actions</th>
@@ -114,11 +112,9 @@
                 </td>
                 <td class="px-4 py-3 font-mono text-xs text-gray-700">{{ $mapping->odoo_id }}</td>
                 <td class="px-4 py-3 text-gray-800 font-medium">{{ $mapping->odoo_label ?: '—' }}</td>
-                <td class="px-4 py-3 text-xs text-gray-500 font-mono">{{ $meta['odoo_value_field'] ?? '—' }}</td>
                 <td class="px-4 py-3 text-gray-300 text-center">→</td>
-                <td class="px-4 py-3 font-mono text-xs text-gray-700">{{ $mapping->external_id }}</td>
+                <td class="px-4 py-3 font-mono text-xs text-gray-700 max-w-[220px] truncate" title="{{ $mapping->external_id }}">{{ $mapping->external_id }}</td>
                 <td class="px-4 py-3 text-gray-800">{{ $mapping->external_label ?: '—' }}</td>
-                <td class="px-4 py-3 text-xs text-gray-500 font-mono">{{ $meta['external_value_field'] ?? '—' }}</td>
                 <td class="px-4 py-3 text-xs text-gray-500">{{ $meta['default_value'] ?? '—' }}</td>
                 <td class="px-4 py-3">
                     <form method="POST" action="{{ route('dashboard.mappings.toggle', [$type, $mapping]) }}">
@@ -133,18 +129,14 @@
                 <td class="px-4 py-3 text-right">
                     <div class="flex items-center justify-end gap-2">
                         <button @click="openEdit({{ json_encode([
-                            'id'                  => $mapping->id,
-                            'channel'             => $mapping->channel,
-                            'odoo_id'             => $mapping->odoo_id,
-                            'odoo_label'          => $mapping->odoo_label,
-                            'external_id'         => $mapping->external_id,
-                            'external_label'      => $mapping->external_label,
-                            'odoo_value_field'    => $meta['odoo_value_field']    ?? '',
-                            'external_value_field'=> $meta['external_value_field'] ?? '',
-                            'default_value'       => $meta['default_value']       ?? '',
-                            'min_length'          => $meta['min_length']          ?? '',
-                            'max_length'          => $meta['max_length']          ?? '',
-                            'is_active'           => $mapping->is_active,
+                            'id'             => $mapping->id,
+                            'channel'        => $mapping->channel,
+                            'odoo_id'        => $mapping->odoo_id,
+                            'odoo_label'     => $mapping->odoo_label,
+                            'external_id'    => $mapping->external_id,
+                            'external_label' => $mapping->external_label,
+                            'default_value'  => $meta['default_value'] ?? '',
+                            'is_active'      => $mapping->is_active,
                         ]) }})"
                                 class="text-indigo-500 hover:text-indigo-700 p-1 rounded hover:bg-indigo-50 transition" title="Edit">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -230,66 +222,76 @@ document.addEventListener('alpine:init', () => {
         ecomFields: [],
         erpLoading: false,
         ecomLoading: false,
-        erpRoute: '{{ route('dashboard.mappings.fetch-erp-fields', $type) }}',
+        fieldsLoaded: false,
+        erpRoute:  '{{ route('dashboard.mappings.fetch-erp-fields', $type) }}',
         ecomRoute: '{{ route('dashboard.mappings.fetch-ecom-fields', $type) }}',
         csrfToken: '{{ csrf_token() }}',
         form: {
             channel: 'shopify',
             odoo_id: '', odoo_label: '',
             external_id: '', external_label: '',
-            odoo_value_field: '', external_value_field: '',
-            default_value: '', min_length: '', max_length: '',
+            default_value: '',
             is_active: true,
         },
+
+        init() {
+            // Fetch field lists once on page load; popups reuse them.
+            this.loadFields();
+        },
+
+        async loadFields() {
+            if (this.fieldsLoaded) return;
+            await Promise.all([this.fetchErpFields(), this.fetchEcomFields()]);
+            this.fieldsLoaded = true;
+        },
+
         openAdd() {
             this.editId = null;
-            this.erpFields = [];
-            this.ecomFields = [];
-            this.form = { channel: 'shopify', odoo_id: '', odoo_label: '', external_id: '', external_label: '', odoo_value_field: '', external_value_field: '', default_value: '', min_length: '', max_length: '', is_active: true };
+            this.form = { channel: 'shopify', odoo_id: '', odoo_label: '', external_id: '', external_label: '', default_value: '', is_active: true };
+            this.loadFields();          // no-op if already loaded
             this.showModal = true;
         },
+
         openEdit(m) {
             this.editId = m.id;
-            this.erpFields = [];
-            this.ecomFields = [];
             this.form = {
-                channel:              m.channel               || 'shopify',
-                odoo_id:              m.odoo_id               || '',
-                odoo_label:           m.odoo_label            || '',
-                external_id:          m.external_id           || '',
-                external_label:       m.external_label        || '',
-                odoo_value_field:     m.odoo_value_field      || '',
-                external_value_field: m.external_value_field  || '',
-                default_value:        m.default_value         || '',
-                min_length:           m.min_length            || '',
-                max_length:           m.max_length            || '',
-                is_active:            m.is_active !== undefined ? m.is_active : true,
+                channel:        m.channel        || 'shopify',
+                odoo_id:        m.odoo_id        || '',
+                odoo_label:     m.odoo_label     || '',
+                external_id:    m.external_id    || '',
+                external_label: m.external_label || '',
+                default_value:  m.default_value  || '',
+                is_active:      m.is_active !== undefined ? m.is_active : true,
             };
+            this.loadFields();          // no-op if already loaded
             this.showModal = true;
         },
+
         closeModal() { this.showModal = false; this.editId = null; },
+
         async fetchErpFields() {
             this.erpLoading = true;
             try {
-                const res = await fetch(this.erpRoute, {
+                const res  = await fetch(this.erpRoute, {
                     method: 'POST',
-                    headers: { 'X-CSRF-TOKEN': this.csrfToken, 'Content-Type': 'application/json' },
+                    headers: { 'X-CSRF-TOKEN': this.csrfToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
                 });
                 const data = await res.json();
                 this.erpFields = data.fields || [];
-            } catch(e) { console.error('fetchErpFields:', e); }
+            } catch (e) { console.error('fetchErpFields:', e); }
             this.erpLoading = false;
         },
+
         async fetchEcomFields() {
             this.ecomLoading = true;
             try {
-                const res = await fetch(this.ecomRoute, {
+                const res  = await fetch(this.ecomRoute, {
                     method: 'POST',
-                    headers: { 'X-CSRF-TOKEN': this.csrfToken, 'Content-Type': 'application/json' },
+                    headers: { 'X-CSRF-TOKEN': this.csrfToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
                 });
                 const data = await res.json();
                 this.ecomFields = data.fields || [];
-            } catch(e) { console.error('fetchEcomFields:', e); }
+            } catch (e) { console.error('fetchEcomFields:', e); }
             this.ecomLoading = false;
         },
     }));

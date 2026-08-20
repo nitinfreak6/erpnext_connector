@@ -92,11 +92,19 @@ class OdooOrderService
     }
 
     /**
-     * Create a sale order from a Shopify order.
+     * Create a sale order in Odoo.
      */
     public function createFromShopify(array $orderData): int
     {
         return $this->odoo->create('sale.order', $orderData);
+    }
+
+    /**
+     * Update an existing sale order in Odoo.
+     */
+    public function updateOrder(int $orderId, array $orderData): bool
+    {
+        return $this->odoo->write('sale.order', [$orderId], $orderData);
     }
 
     /**

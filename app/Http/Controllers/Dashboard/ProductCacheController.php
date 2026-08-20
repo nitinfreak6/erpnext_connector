@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
+use App\Support\ErpId;
 use App\Jobs\Amazon\PushProductToAmazonJob;
 use App\Models\ProductCache;
 use App\Services\ProductCacheService;
@@ -57,7 +58,7 @@ class ProductCacheController extends Controller
         ));
     }
 
-    public function show(int $erpId): View
+    public function show(string $erpId): View
     {
         $erpCol = ProductCache::erpIdColumn();
         $cacheRecord = ProductCache::where($erpCol, $erpId)->firstOrFail();
@@ -77,7 +78,7 @@ class ProductCacheController extends Controller
         }
     }
 
-    public function refresh(int $erpId): RedirectResponse
+    public function refresh(string $erpId): RedirectResponse
     {
         try {
             $this->cache->fetchAndCacheSingle($erpId);
@@ -100,8 +101,11 @@ class ProductCacheController extends Controller
             return back()->with('error', "No push job registered for driver [{$ecomDriver}].");
         }
 
-        // FIX: use erp_id ?? odoo_id
-        $ids = array_filter(array_map('intval', $request->input('ids', [])));
+        // FIX: use erp_id ?? odoo_id — preserve string ERPNext doc names (do not intval)
+        $ids = array_values(array_filter(
+            array_map(fn ($id) => ErpId::normalize($id), $request->input('ids', [])),
+            fn ($id) => $id !== 0 && $id !== '0' && $id !== ''
+        ));
 
         if (!empty($ids)) {
             foreach ($ids as $erpId) {
@@ -162,7 +166,7 @@ class ProductCacheController extends Controller
         return back()->with('success', count($pendingIds) . ' product(s) queued for Amazon.');
     }
 
-    public function clear(int $erpId): RedirectResponse
+    public function clear(string $erpId): RedirectResponse
     {
         $this->cache->clearCache($erpId);
         return back()->with('success', "Cache cleared for product #{$erpId}.");

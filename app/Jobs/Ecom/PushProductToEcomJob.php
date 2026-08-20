@@ -22,7 +22,7 @@ class PushProductToEcomJob implements ShouldQueue
     public array $backoff = [60, 300, 900];
     public int   $timeout = 300;
 
-    public function __construct(private readonly int $erpId)
+    public function __construct(private readonly int|string $erpId)
     {
         $this->onQueue('sync');
     }
@@ -68,7 +68,10 @@ class PushProductToEcomJob implements ShouldQueue
             return;
         }
 
-        // Create log entry before push
+        $related = array_filter([
+            'vendors' => $data['vendors'] ?? null,
+        ], fn ($v) => $v !== null && $v !== []);
+
         $log = SyncLog::create([
             'direction'   => SyncLog::DIRECTION_ERP_TO_ECOM,
             'entity_type' => 'product',
@@ -78,26 +81,70 @@ class PushProductToEcomJob implements ShouldQueue
         ]);
 
         try {
-            $ecomProductId = $ecom->syncProduct($template, $variants, $attributeValues);
+            $ecomProductId = $ecom->syncProduct($template, $variants, $attributeValues, $related);
 
             $cache->markEcomSent($this->erpId, $ecomProductId);
+			
+			$wire = method_exists($ecom, 'takeWireLog') ? $ecom->takeWireLog() : [];
 
-            // Store response so Info tab shows it
+            // request_payload = the outgoing request only (action/query/variables).
+            // response_payload = responses only. recordResponse() attaches the
+            // response onto each wire entry, so split the two cleanly here.
+            $requests = array_map(fn($w) => [
+                'action'    => $w['action'] ?? null,
+                'query'     => $w['query'] ?? null,
+                'variables' => $w['variables'] ?? null,
+            ], $wire);
+
+            $responses = array_map(fn($w) => [
+                'action'   => $w['action'] ?? null,
+                'response' => $w['response'] ?? null,
+            ], $wire);
+
             $log->update([
-                'status'           => SyncLog::STATUS_SUCCESS,
-                'response_payload' => json_encode([
-                    'id'              => $ecomProductId,
-                    'ecom_product_id' => $ecomProductId,
-                    'driver'          => $ecom->driverName(),
-                ]),
-                'synced_at' => now(),
-            ]);
+				'status'           => SyncLog::STATUS_SUCCESS,
+				'request_payload'  => $wire ? json_encode($requests, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : null,
+				'response_payload' => json_encode(
+					$wire
+						? ['ecom_product_id' => $ecomProductId, 'driver' => $ecom->driverName(), 'mutations' => $responses]
+						: ['ecom_product_id' => $ecomProductId, 'driver' => $ecom->driverName()],
+					JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+				),
+				'synced_at' => now(),
+			]);
 
             Log::info("PushProductToEcomJob [{$ecom->driverName()}]: synced #{$this->erpId} → {$ecomProductId}");
 
         } catch (\Throwable $e) {
+            // Capture whatever was recorded before the exception so the
+            // product detail page shows the real GraphQL payload, not the
+            // intermediate buildPayload() output.
+            $wire = method_exists($ecom, 'takeWireLog') ? $ecom->takeWireLog() : [];
+
             $cache->markEcomFailed($this->erpId, $e->getMessage());
             $log->markFailed($e->getMessage());
+
+            if ($wire) {
+                $requests = array_map(fn($w) => [
+                    'action'    => $w['action'] ?? null,
+                    'query'     => $w['query'] ?? null,
+                    'variables' => $w['variables'] ?? null,
+                ], $wire);
+
+                $responses = array_map(fn($w) => [
+                    'action'   => $w['action'] ?? null,
+                    'response' => $w['response'] ?? null,
+                ], $wire);
+
+                $log->update([
+                    'request_payload'  => json_encode($requests, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                    'response_payload' => json_encode(
+                        ['driver' => $ecom->driverName(), 'error' => $e->getMessage(), 'mutations' => $responses],
+                        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                    ),
+                ]);
+            }
+
             Log::error("PushProductToEcomJob [{$ecom->driverName()}]: failed #{$this->erpId} — " . $e->getMessage());
             throw $e;
         }

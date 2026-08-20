@@ -6,6 +6,7 @@ use App\Models\AlertNotification;
 use App\Models\ProductCache;
 use App\Models\SyncLog;
 use App\Models\SyncMapping;
+use App\Services\Sync\SyncEntityState;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -89,7 +90,7 @@ class AlertNotificationService
         $cutoff = now()->subHours(self::PENDING_HOURS);
 
         $rows = SyncMapping::where('entity_type', 'dispatch')
-            ->where('ecom_status', 'pending_dispatch')
+            ->whereIn('ecom_status', SyncEntityState::DISPATCH_PUSHABLE)
             ->where('created_at', '<=', $cutoff)
             ->get();
 

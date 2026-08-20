@@ -2,75 +2,41 @@
 
 namespace App\Console\Commands;
 
-use App\Jobs\Ecom\FetchEcomProductsJob;
-use App\Jobs\Erp\FetchErpProductsJob;
-use App\Models\SyncQueueState;
-use App\Services\SettingsService;
+use App\Services\Sync\ScheduledSyncRunner;
 use Illuminate\Console\Command;
 
 class SyncProducts extends Command
 {
     protected $signature = 'sync:products
-                            {--full    : Ignore cursor and sync ALL active products}
                             {--dry-run : Print state without dispatching}
-                            {--status  : Show current cursor and queue state, then exit}
-                            {--force   : Run even when product sync is disabled in settings}';
+                            {--force   : Ignored — kept for backward compatibility}';
 
-    protected $description = 'Sync products — incremental by default (new and updated only).';
+    protected $description = 'Sync products (fetch + post) using dashboard UI logic and global settings.';
 
-    public function handle(SettingsService $settings): int
+    public function handle(ScheduledSyncRunner $runner): int
     {
-        if ($this->option('status')) {
-            $state = SyncQueueState::forType('products');
-            $this->table(['Field', 'Value'], [
-                ['ERP cursor (last write_date)',  $state->last_erp_write_date  ?? $state->attributes['last_odoo_write_date'] ?? '<none>'],
-                ['Ecom cursor (last updated_at)', $state->last_ecom_write_date ?? '<none>'],
-                ['Last polled',                   $state->last_poll_at?->diffForHumans() ?? 'never'],
-                ['Currently running',             $state->is_running ? 'YES' : 'no'],
-                ['Last error',                    $state->notes ?? '-'],
-            ]);
-            return self::SUCCESS;
-        }
-
-        if (!$settings->isProductSyncEnabled() && !$this->option('force')) {
-            $this->warn('Product sync is DISABLED in settings (product_sync_enabled = off).');
-            $this->line('  Run with <comment>--force</comment> to override.');
-            return self::SUCCESS;
-        }
-
         if ($this->option('dry-run')) {
-            $mode = $settings->productSyncMode();
-            $this->info("Dry run — would sync products in '{$mode}' mode (incremental, new/updated only).");
+            $this->info('Dry run — would run product fetch + post per product_sync_mode.');
+
             return self::SUCCESS;
         }
 
-        $full = (bool) $this->option('full');
-        $mode = $settings->productSyncMode();
+        $result = $runner->runProducts();
+        $this->outputResult('products', $result);
 
-        if ($full) {
-            SyncQueueState::forType('products')->update([
-                'last_erp_write_date'  => null,
-                'last_ecom_write_date' => null,
-                'is_running'           => false,
-            ]);
-            $this->info('Cursors reset — full sync will run.');
-        }
+        return ($result['level'] ?? '') === 'error' ? self::FAILURE : self::SUCCESS;
+    }
 
-        if ($mode === 'erp_to_ecom' || $mode === 'bidirectional') {
-            $this->info('Dispatching ERP → Ecom product sync' . ($full ? ' (full)' : ' (incremental — new/updated only)') . '...');
-            FetchErpProductsJob::dispatch(fullSync: $full)->onQueue('sync');
-        }
+    private function outputResult(string $entity, array $result): void
+    {
+        $level   = $result['level'] ?? 'info';
+        $message = $result['message'] ?? '';
 
-        if ($mode === 'ecom_to_erp' || $mode === 'bidirectional') {
-            $this->info('Dispatching Ecom → ERP product sync' . ($full ? ' (full)' : ' (incremental — new/updated only)') . '...');
-            FetchEcomProductsJob::dispatch(fullSync: $full)->onQueue('sync');
-        }
-
-        if ($mode === 'disabled') {
-            $this->warn('Product sync mode is set to disabled.');
-        }
-
-        $this->info('Done.');
-        return self::SUCCESS;
+        match ($level) {
+            'error'   => $this->error("[{$entity}] {$message}"),
+            'warning' => $this->warn("[{$entity}] {$message}"),
+            'skipped' => $this->line("[{$entity}] skipped — {$message}"),
+            default   => $this->info("[{$entity}] {$message}"),
+        };
     }
 }

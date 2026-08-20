@@ -1,0 +1,14 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /erp_next/
+
+    # If request already goes to public/, skip
+    RewriteCond %{REQUEST_URI} !^/erp_next/public/
+
+    # Don't rewrite real files/folders
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+
+    # Route everything through public/index.php
+    RewriteRule ^(.*)$ /erp_next/public/$1 [L]
+</IfModule>

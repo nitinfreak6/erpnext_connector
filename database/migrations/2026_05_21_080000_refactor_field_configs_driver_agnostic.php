@@ -94,50 +94,46 @@ return new class extends Migration
         });
 
         // Step 6: Add composite index for driver pairs
-        // Drop old indexes using SQL (safer than Blueprint)
-        DB::statement("ALTER TABLE product_field_configs DROP INDEX IF EXISTS product_field_configs_channel_is_active_index");
-        DB::statement("ALTER TABLE product_field_configs DROP INDEX IF EXISTS product_field_configs_channel_scope_index");
-        
+        // MySQL does NOT support "DROP INDEX IF EXISTS" inside ALTER TABLE (that's MariaDB syntax).
+        // Check existence via INFORMATION_SCHEMA first, then drop only if found.
+        $oldIndexes = [
+            'product_field_configs_channel_is_active_index',
+            'product_field_configs_channel_scope_index',
+        ];
+
+        foreach ($oldIndexes as $indexName) {
+            $exists = DB::selectOne("
+                SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+                WHERE TABLE_NAME   = 'product_field_configs'
+                AND   INDEX_NAME   = ?
+                AND   TABLE_SCHEMA = DATABASE()
+            ", [$indexName]);
+
+            if ($exists) {
+                DB::statement("ALTER TABLE product_field_configs DROP INDEX `{$indexName}`");
+            }
+        }
+
         // Add new indexes only if they don't already exist
-        $indexExists = DB::selectOne("
-            SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS 
-            WHERE TABLE_NAME = 'product_field_configs' 
-            AND INDEX_NAME = 'idx_driver_pair' 
-            AND TABLE_SCHEMA = DATABASE()
-        ");
-        
-        if (!$indexExists) {
-            Schema::table('product_field_configs', function (Blueprint $table) {
-                $table->index(['ecom_driver', 'erp_driver', 'is_active'], 'idx_driver_pair');
-            });
-        }
-        
-        // Add entity_scope index if it doesn't exist
-        $indexExists = DB::selectOne("
-            SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS 
-            WHERE TABLE_NAME = 'product_field_configs' 
-            AND INDEX_NAME = 'idx_entity_scope' 
-            AND TABLE_SCHEMA = DATABASE()
-        ");
-        
-        if (!$indexExists) {
-            Schema::table('product_field_configs', function (Blueprint $table) {
-                $table->index(['entity_type', 'scope'], 'idx_entity_scope');
-            });
-        }
-        
-        // Add entity_type index if it doesn't exist
-        $indexExists = DB::selectOne("
-            SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS 
-            WHERE TABLE_NAME = 'product_field_configs' 
-            AND INDEX_NAME = 'idx_entity_type' 
-            AND TABLE_SCHEMA = DATABASE()
-        ");
-        
-        if (!$indexExists) {
-            Schema::table('product_field_configs', function (Blueprint $table) {
-                $table->index(['entity_type'], 'idx_entity_type');
-            });
+        $newIndexes = [
+            'idx_driver_pair'  => ['ecom_driver', 'erp_driver', 'is_active'],
+            'idx_entity_scope' => ['entity_type', 'scope'],
+            'idx_entity_type'  => ['entity_type'],
+        ];
+
+        foreach ($newIndexes as $indexName => $columns) {
+            $exists = DB::selectOne("
+                SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+                WHERE TABLE_NAME   = 'product_field_configs'
+                AND   INDEX_NAME   = ?
+                AND   TABLE_SCHEMA = DATABASE()
+            ", [$indexName]);
+
+            if (!$exists) {
+                Schema::table('product_field_configs', function (Blueprint $table) use ($columns, $indexName) {
+                    $table->index($columns, $indexName);
+                });
+            }
         }
     }
 

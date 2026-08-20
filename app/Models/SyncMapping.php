@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use App\Services\Sync\SyncPayloadStore;
 use Illuminate\Database\Eloquent\Model;
 
 class SyncMapping extends Model
 {
     protected $fillable = [
         'entity_type',
+        'erp_driver',
         'ecom_driver',
         'erp_id',
         'ecom_id',
@@ -20,6 +22,7 @@ class SyncMapping extends Model
         'ecom_updated_at',
         'last_sync_direction',
 		'ecom_status',
+        'sync_message',
         'odoo_id',
         'shopify_id',
         'shopify_secondary_id',
@@ -28,11 +31,129 @@ class SyncMapping extends Model
     ];
 
     protected $casts = [
-        'metadata'       => 'array',
         'last_synced_at' => 'datetime',
         'erp_updated_at' => 'datetime',
         'ecom_updated_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        static::deleting(function (SyncMapping $mapping) {
+            $mapping->deletePayloadFile();
+        });
+    }
+
+    /**
+     * Fetched source payload from disk (or legacy inline JSON in metadata column).
+     */
+    public function payload(): ?array
+    {
+        $side = $this->payloadSide();
+        $id   = $this->payloadId($side);
+
+        if ($side && $id) {
+            foreach ($this->payloadEntityTypes() as $entityType) {
+                $fromFile = SyncPayloadStore::get($entityType, $side, $id);
+                if ($fromFile !== null) {
+                    return $fromFile;
+                }
+            }
+        }
+
+        $raw = $this->getAttributes()['metadata'] ?? null;
+        if (is_array($raw)) {
+            return $raw;
+        }
+        if (is_string($raw) && $raw !== '' && !str_starts_with($raw, SyncPayloadStore::BASE . '/')) {
+            $decoded = json_decode($raw, true);
+
+            return is_array($decoded) ? $decoded : null;
+        }
+
+        return null;
+    }
+
+    public function hasPayload(): bool
+    {
+        return $this->payload() !== null;
+    }
+
+    public function storePayload(array $data): void
+    {
+        $side = $this->payloadSide();
+        $id   = $this->payloadId($side);
+
+        if (!$side || !$id) {
+            return;
+        }
+
+        SyncPayloadStore::put($this->canonicalEntityType(), $side, $id, $data);
+    }
+
+    /** @return list<string> */
+    private function payloadEntityTypes(): array
+    {
+        $type = (string) ($this->entity_type ?? '');
+
+        if (in_array($type, ['order', 'sales_order'], true)) {
+            return array_values(array_unique([$type, 'sales_order', 'order']));
+        }
+
+        return $type !== '' ? [$type] : [];
+    }
+
+    private function canonicalEntityType(): string
+    {
+        $type = (string) ($this->entity_type ?? '');
+
+        return in_array($type, ['order', 'sales_order'], true) ? 'sales_order' : $type;
+    }
+
+    public function deletePayloadFile(): void
+    {
+        $side = $this->payloadSide();
+        $id   = $this->payloadId($side);
+
+        if ($this->entity_type && $side && $id) {
+            SyncPayloadStore::delete($this->entity_type, $side, $id);
+        }
+    }
+
+    /** @deprecated Use payload() — kept so existing call sites keep working. */
+    public function getMetadataAttribute($value): ?array
+    {
+        return $this->payload();
+    }
+
+    public function payloadSide(): ?string
+    {
+        $direction = $this->attributes['last_sync_direction'] ?? null;
+
+        if ($direction) {
+            return SyncPayloadStore::sideForDirection($direction);
+        }
+
+        if (!empty($this->attributes['ecom_id']) && empty($this->attributes['erp_id'])) {
+            return 'ecom';
+        }
+
+        if (!empty($this->attributes['erp_id'])) {
+            return 'erp';
+        }
+
+        return !empty($this->attributes['ecom_id']) ? 'ecom' : null;
+    }
+
+    public function payloadId(?string $side = null): ?string
+    {
+        $side ??= $this->payloadSide();
+
+        return match ($side) {
+            'ecom'  => !empty($this->attributes['ecom_id']) ? (string) $this->attributes['ecom_id'] : null,
+            'erp'   => !empty($this->attributes['erp_id']) ? (string) $this->attributes['erp_id'] : null,
+            default => null,
+        };
+    }
 
     // Entity type constants
     const TYPE_PRODUCT          = 'product';

@@ -157,4 +157,30 @@ class ConnectorRegistry
     {
         return $this->driver($slug) !== [];
     }
+	
+	public function hasAdapter(string $slug): bool
+    {
+        return $this->adapterClass($slug) !== null;
+    }
+
+    /**
+     * All ERP drivers that can be selected (slug => label).
+     *
+     * @return array<string, string>
+     */
+    public function allErpOptions(): array
+    {
+        $out = [];
+        foreach ($this->erpDrivers() as $slug => $cfg) {
+            if (($cfg['enabled'] ?? true) === false) {
+                continue;
+            }
+            if ($this->adapterClass($slug) === null) {
+                continue;
+            }
+            $out[$slug] = $cfg['label'] ?? ucfirst($slug);
+        }
+
+        return $out;
+    }
 }

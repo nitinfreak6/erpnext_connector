@@ -9,10 +9,12 @@ interface EcomInterface
     // ── Products ──────────────────────────────────────────────────────────
 
     public function getProducts(array $filters = []): array;
-    public function getProduct(string|int $id): array;
+    public function getProduct(string|int $id): ?array;
     public function createProduct(array $payload): array;
     public function updateProduct(string|int $id, array $payload): array;
     public function deleteProduct(string|int $id): void;
+    public function deleteCustomer(string|int $id): void;
+    public function deleteOrder(string|int $id): void;
     public function getVariants(array $productIds): array;
 
     /**
@@ -20,19 +22,21 @@ interface EcomInterface
      * Each adapter builds its own payload and calls its own API.
      * Returns the ecom platform's product ID.
      */
-    public function syncProduct(array $erpTemplate, array $variants, array $attributeValues): string;
+    public function syncProduct(array $erpTemplate, array $variants, array $attributeValues, array $related = []): string;
 
     // ── Orders ────────────────────────────────────────────────────────────
 
     public function getOrders(array $filters = []): array;
     public function getOrder(string|int $id): array;
     public function createOrder(array $orderData): array;
-    public function updateOrder(string|int $id, array $updates): void;
+    public function updateOrder(string|int $id, array $updates): array;
     public function cancelOrder(string|int $id, ?string $reason = null): void;
+	
+
 
     // ── Inventory ─────────────────────────────────────────────────────────
 
-    public function updateInventory(string|int $variantId, int $quantity, ?string $locationId = null): void;
+    public function updateInventory(string|int $variantId, int $quantity, ?string $locationId = null, ?array $mappedPayload = null): void;
     public function getInventoryLevels(array $inventoryItemIds, string $locationId): array;
 
     // ── Customers ─────────────────────────────────────────────────────────
@@ -53,6 +57,13 @@ interface EcomInterface
     public function createFulfillment(string|int $orderId, array $fulfillmentData): array;
     public function updateFulfillment(string|int $fulfillmentId, array $updates): void;
 
+    /**
+     * Fulfillments already created on the e-commerce order (for E-com → ERP dispatch fetch).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getFulfillmentsForOrder(string|int $orderId): array;
+
     // ── Field discovery (powers the field-config / mapping menus) ─────────
 
     /**
@@ -66,4 +77,5 @@ interface EcomInterface
      * @return array<int, array{key:string,label:string,scope:string}>
      */
     public function getAvailableFields(string $entityType): array;
+	public function getMappingOptions(string $type, ?string $search = null): array;
 }

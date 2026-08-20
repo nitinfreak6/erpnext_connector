@@ -67,16 +67,16 @@ class FetchErpOrdersJob implements ShouldQueue
             foreach ($orders as $order) {
                 $orderId = (string) $order['id'];
 
-                $mapping = SyncMapping::where('entity_type', 'order')
+                $mapping = SyncMapping::whereIn('entity_type', ['order', 'sales_order'])
                     ->where('erp_id', $orderId)
                     ->first();
 
                 if (!$mapping) {
                     // Order not in ecom yet — push it
                     Log::info("FetchErpOrdersJob: order #{$orderId} not in ecom, pushing");
-                    PushOrderToEcomJob::dispatch((int) $orderId);
+                    PushOrderToEcomJob::dispatch($orderId);
 
-                } elseif ($order['state'] === 'cancel') {
+                } elseif (($order['state'] ?? '') === 'cancel') {
                     PushCancellationToEcomJob::dispatch($orderId);
 
                 } elseif (!empty($order['picking_ids'])) {
@@ -91,16 +91,19 @@ class FetchErpOrdersJob implements ShouldQueue
                             continue; // skip in-progress or draft pickings
                         }
 
-                        $picking['erp_order_id'] = (int) $orderId;
+                        $picking['erp_order_id'] = $orderId;
 
-                        // Skip if already dispatched
-                        $alreadyDone = \App\Models\SyncLog::where('entity_type', 'dispatch')
-                            ->where('entity_id', $orderId)
-                            ->where('status', \App\Models\SyncLog::STATUS_SUCCESS)
-                            ->exists();
+                        $pickingKey = (string) ($picking['id'] ?? '');
+
+                        // Skip if this delivery note / picking was already pushed
+                        $alreadyDone = $pickingKey !== ''
+                            && \App\Models\SyncLog::where('entity_type', 'dispatch')
+                                ->where('entity_id', $pickingKey)
+                                ->where('status', \App\Models\SyncLog::STATUS_SUCCESS)
+                                ->exists();
 
                         if ($alreadyDone) {
-                            Log::debug("FetchErpOrdersJob: order #{$orderId} already dispatched, skipping picking#{$picking['id']}");
+                            Log::debug("FetchErpOrdersJob: picking#{$pickingKey} already dispatched, skipping");
                             continue;
                         }
 

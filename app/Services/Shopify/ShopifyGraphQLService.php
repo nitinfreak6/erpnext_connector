@@ -21,7 +21,7 @@ class ShopifyGraphQLService
     {
         $settings    = app(\App\Services\SettingsService::class);
         $shop        = $settings->shopifyShop() ?: config('shopify.shop');
-        $apiVersion  = config('shopify.api_version', '2024-01');
+        $apiVersion  = $settings->shopifyVersion() ?: '2024-01';
         $accessToken = $settings->shopifyAccessToken() ?: config('shopify.access_token');
 
         $this->endpoint = "https://{$shop}.myshopify.com/admin/api/{$apiVersion}/graphql.json";

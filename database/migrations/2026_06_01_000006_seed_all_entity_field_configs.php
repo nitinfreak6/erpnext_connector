@@ -28,8 +28,8 @@ return new class extends Migration
         foreach ([
             // ecom_field           ecom_label              erp_field           erp_label              scope     field_type  transform       default  sort
             ['email',              'Email',                 'email',            'Email',                'default','default',  null,           null,    1],
-            ['first_name',         'First Name',            'name',             'Name',                 'default','default',  null,           null,    2],
-            ['last_name',          'Last Name',             null,               null,                   'default','custom',   null,           '',      3],
+            ['firstName',          'First Name',            'name',             'Name',                 'default','default',  null,           null,    2],
+            ['lastName',           'Last Name',             null,               null,                   'default','custom',   null,           '',      3],
             ['phone',              'Phone',                 'phone',            'Phone',                'default','default',  null,           null,    4],
             ['note',               'Note',                  'comment',          'Notes',                'default','default',  null,           null,    5],
         ] as [$ef, $el, $rf, $rl, $sc, $ft, $tr, $dv, $so]) {

@@ -85,27 +85,14 @@ class ProductSyncService
 
     private function normalizeErpProduct(array $template, array $variants, array $attributeValues): array
     {
-        return [
-            'id'                   => $template['id'],
-            'name'                 => $template['name'] ?? '',
-            'list_price'           => $template['list_price'] ?? 0,
-            'default_code'         => $template['default_code'] ?? '',
-            'description_sale'     => $template['description_sale'] ?? '',
-            'active'               => $template['active'] ?? true,
-            'sale_ok'              => $template['sale_ok'] ?? true,
-            'weight'               => $template['weight'] ?? null,
-            'barcode'              => $template['barcode'] ?? null,
-            'categ_id'             => $template['categ_id'] ?? null,
-            'image_1920'           => $template['image_1920'] ?? null,
-            'website_meta_keywords'=> $template['website_meta_keywords'] ?? null,
-            'is_published'         => $template['is_published'] ?? false,
-            'write_date'           => $template['write_date'] ?? now()->toDateTimeString(),
-            'variants'             => $variants,
-            'attribute_values'     => $attributeValues,
-        ];
+        return array_merge($template, [
+            'id'               => $template['id'] ?? $template['name'] ?? '',
+            'variants'         => $variants,
+            'attribute_values' => $attributeValues,
+        ]);
     }
 
-    public function syncEcomProductToErp(array $ecomProduct): int
+    public function syncEcomProductToErp(array $ecomProduct): int|string
     {
         if ($this->isErpToEcom()) {
             throw new \LogicException('syncEcomProductToErp() is for Ecom → ERP direction.');
@@ -120,7 +107,12 @@ class ProductSyncService
 
             $erpId = $result['id'] ?? $result['erp_id'] ?? null;
             Log::info("ProductSyncService: synced {$this->ecom->driverName()} → ERP #{$erpId}");
-            return (int) $erpId;
+
+            if ($erpId === null || $erpId === '' || $erpId === false) {
+                return 0;
+            }
+
+            return is_numeric($erpId) ? (int) $erpId : (string) $erpId;
         } catch (\Throwable $e) {
             Log::error("ProductSyncService: ecom→erp sync failed", ['error' => $e->getMessage()]);
             throw $e;
@@ -134,7 +126,7 @@ class ProductSyncService
             ->where('ecom_driver', $ecomDriver)
             ->where('erp_driver', $erpDriver)
             ->where('is_active', true)
-            ->orderBy('sort_order')
+            ->ordered()
             ->get();
     }
 }

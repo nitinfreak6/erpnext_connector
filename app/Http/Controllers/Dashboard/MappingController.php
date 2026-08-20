@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
 use App\Models\ChannelMapping;
+use App\Services\Erp\ErpInterface;
+use App\Services\SettingsService;
 use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\View\View;
@@ -12,7 +14,7 @@ class MappingController extends Controller
 {
     private array $validTypes;
 
-    public function __construct()
+    public function __construct(private readonly SettingsService $settings)
     {
         $this->validTypes = array_keys(ChannelMapping::typeLabels());
     }
@@ -23,6 +25,7 @@ class MappingController extends Controller
     public function index(Request $request, string $type): View
     {
         abort_unless(in_array($type, $this->validTypes), 404);
+        $this->assertMappingTypeEnabled($type);
 
         $channel  = $request->query('channel', 'shopify');
         $search   = $request->query('search');
@@ -41,9 +44,11 @@ class MappingController extends Controller
         $mappings = $query->paginate($perPage)->withQueryString();
         $labels   = ChannelMapping::typeLabels();
         $icons    = ChannelMapping::typeIcons();
+		
+		$typeNoun = ucfirst($type); 
 
         return view('dashboard.mappings.index', compact(
-            'type', 'channel', 'search', 'mappings', 'labels', 'icons', 'perPage'
+            'type', 'channel', 'search', 'mappings', 'typeNoun', 'labels', 'icons', 'perPage'
         ));
     }
 
@@ -53,6 +58,7 @@ class MappingController extends Controller
     public function store(Request $request, string $type): RedirectResponse
     {
         abort_unless(in_array($type, $this->validTypes), 404);
+        $this->assertMappingTypeEnabled($type);
 
         $data = $request->validate([
             'channel'              => 'required|in:shopify,amazon,both',
@@ -94,6 +100,7 @@ class MappingController extends Controller
     public function update(Request $request, string $type, ChannelMapping $mapping): RedirectResponse
     {
         abort_unless($mapping->type === $type, 404);
+        $this->assertMappingTypeEnabled($type);
 
         $data = $request->validate([
             'channel'              => 'required|in:shopify,amazon,both',
@@ -134,6 +141,7 @@ class MappingController extends Controller
     public function destroy(string $type, ChannelMapping $mapping): RedirectResponse
     {
         abort_unless($mapping->type === $type, 404);
+        $this->assertMappingTypeEnabled($type);
         $mapping->delete();
 
         return back()->with('success', 'Mapping deleted.');
@@ -145,6 +153,7 @@ class MappingController extends Controller
     public function toggle(string $type, ChannelMapping $mapping): RedirectResponse
     {
         abort_unless($mapping->type === $type, 404);
+        $this->assertMappingTypeEnabled($type);
         $mapping->update(['is_active' => !$mapping->is_active]);
 
         return back()->with('success', $mapping->is_active ? 'Mapping enabled.' : 'Mapping disabled.');
@@ -156,6 +165,7 @@ class MappingController extends Controller
     public function import(Request $request, string $type): RedirectResponse
     {
         abort_unless(in_array($type, $this->validTypes), 404);
+        $this->assertMappingTypeEnabled($type);
 
         $request->validate(['json_data' => 'required|string']);
 
@@ -185,68 +195,23 @@ class MappingController extends Controller
     }
 
 
-    // ── Odoo model per mapping type ──────────────────────────────────────
-    private function odooModelForType(string $type): ?string
-    {
-        return match ($type) {
-            ChannelMapping::TYPE_WAREHOUSE        => 'stock.location',
-            ChannelMapping::TYPE_SHIPPING         => 'delivery.carrier',
-            ChannelMapping::TYPE_CATEGORY         => 'product.category',
-            ChannelMapping::TYPE_PRICELIST        => 'product.pricelist',
-            ChannelMapping::TYPE_PAYMENT          => 'account.journal',
-            ChannelMapping::TYPE_CHANNEL          => 'crm.team',
-            ChannelMapping::TYPE_SALES_ORDER_TYPE => 'sale.order.type',
-            ChannelMapping::TYPE_SALES_REP        => 'res.users',
-            ChannelMapping::TYPE_PRODUCT_SIZE     => 'product.attribute.value',
-            ChannelMapping::TYPE_TAX              => 'account.tax',
-            default                               => null,
-        };
-    }
-
-    // ── Shopify fields per mapping type ──────────────────────────────────
-    private function shopifyFieldsForType(string $type): array
-    {
-        return match ($type) {
-            ChannelMapping::TYPE_WAREHOUSE        => ['id' => 'Location ID', 'name' => 'Location Name', 'address1' => 'Address'],
-            ChannelMapping::TYPE_SHIPPING         => ['title' => 'Shipping Title', 'price' => 'Price', 'code' => 'Code'],
-            ChannelMapping::TYPE_CATEGORY         => ['product_type' => 'Product Type', 'tags' => 'Tags'],
-            ChannelMapping::TYPE_PRICELIST        => ['currency' => 'Currency Code', 'presentment_currency' => 'Presentment Currency'],
-            ChannelMapping::TYPE_PAYMENT          => ['gateway' => 'Gateway', 'payment_gateway_names' => 'Gateway Names'],
-            ChannelMapping::TYPE_CHANNEL          => ['source_name' => 'Source Name', 'referring_site' => 'Referring Site'],
-            ChannelMapping::TYPE_SALES_ORDER_TYPE => ['source_name' => 'Source Name', 'gateway' => 'Gateway'],
-            ChannelMapping::TYPE_SALES_REP        => ['source_name' => 'Source Name'],
-            ChannelMapping::TYPE_PRODUCT_SIZE     => ['value' => 'Option Value', 'name' => 'Option Name'],
-            ChannelMapping::TYPE_TAX              => ['title' => 'Tax Title', 'rate' => 'Rate', 'price' => 'Tax Price'],
-            default                               => [],
-        };
-    }
-
     /**
-     * Fetch Odoo ERP fields for a mapping type.
+     * Fetch ERP-side options for a mapping type (driver-agnostic via ErpInterface).
      */
     public function fetchErpFields(Request $request, string $type): \Illuminate\Http\JsonResponse
     {
         abort_unless(in_array($type, $this->validTypes), 404);
-
-        $model = $this->odooModelForType($type);
-        if (!$model) {
-            return response()->json(['fields' => [], 'label' => $type]);
-        }
+        $this->assertMappingTypeEnabled($type);
 
         try {
-            $odoo   = app(\App\Services\Odoo\OdooService::class);
-            $domain = match ($type) {
-                ChannelMapping::TYPE_WAREHOUSE => [['usage', '=', 'internal']],
-                ChannelMapping::TYPE_PAYMENT   => [['type', 'in', ['bank', 'cash', 'general']]],
-                default                        => [],
-            };
-            $records = $odoo->searchRead($model, $domain, ['id', 'name', 'display_name'], ['limit' => 200]);
-            $fields  = array_map(fn($r) => [
-                'id'    => (string) $r['id'],
-                'label' => $r['display_name'] ?? $r['name'] ?? "#{$r['id']}",
-            ], $records);
+            $erp    = app(ErpInterface::class);
+            $fields = $erp->getMappingOptions($type, $request->query('q'));
 
-            return response()->json(['fields' => $fields, 'model' => $model]);
+            return response()->json([
+                'fields' => $fields,
+                'driver' => $erp->driverName(),
+                'type'   => $type,
+            ]);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage(), 'fields' => []], 422);
         }
@@ -256,13 +221,17 @@ class MappingController extends Controller
      * Fetch Shopify/Ecom fields for a mapping type (static definitions).
      */
     public function fetchEcomFields(Request $request, string $type): \Illuminate\Http\JsonResponse
+	{
+		abort_unless(in_array($type, $this->validTypes), 404);
+		$this->assertMappingTypeEnabled($type);
+		$fields = app(\App\Services\Ecom\EcomInterface::class)
+					->getMappingOptions($type, $request->query('q'));
+		return response()->json(['fields' => $fields, 'type' => $type]);
+	}
+
+    private function assertMappingTypeEnabled(string $type): void
     {
-        abort_unless(in_array($type, $this->validTypes), 404);
-
-        $raw    = $this->shopifyFieldsForType($type);
-        $fields = array_map(fn($key, $label) => ['key' => $key, 'label' => $label], array_keys($raw), array_values($raw));
-
-        return response()->json(['fields' => $fields, 'type' => $type]);
+        abort_unless($this->settings->isMappingTypeEnabled($type), 403);
     }
 
 }

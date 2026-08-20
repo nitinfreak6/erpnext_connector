@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\ProductCache;
+use App\Models\SyncMapping;
+use App\Support\ErpId;
 use App\Services\Erp\ErpInterface;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -13,6 +15,20 @@ class ProductCacheService
     private const BASE_DIR = 'products';
 
     public function __construct(private readonly ErpInterface $erp) {}
+
+    private function normalizeErpId(mixed $id): int|string
+    {
+        return ErpId::normalize($id);
+    }
+
+    private function cacheFileKey(int|string $erpId): string
+    {
+        if (is_int($erpId)) {
+            return (string) $erpId;
+        }
+
+        return preg_replace('/[^a-zA-Z0-9._-]/', '_', $erpId) ?: md5($erpId);
+    }
 
     // ── Fetch & Cache ─────────────────────────────────────────────────────
 
@@ -40,19 +56,18 @@ class ProductCacheService
         return $count;
     }
 
-    public function fetchAndCacheSingle(int $erpId, bool $forceRefetch = false): ProductCache
+    public function fetchAndCacheSingle(int|string $erpId, bool $forceRefetch = false): ProductCache
     {
-        $product = $this->erp->getProductById($erpId);
+        $slim = $this->erp->getProductById($erpId);
 
-        if (!$product) {
+        if (!$slim) {
             throw new \RuntimeException("ERP product #{$erpId} not found in {$this->erp->driverName()}.");
         }
 
-        // Skip re-cache if write_date hasn't changed since last fetch — unless forced
         if (!$forceRefetch) {
-            $erpIdCol  = ProductCache::erpIdColumn();
-            $existing  = ProductCache::where($erpIdCol, $erpId)->first();
-            $erpWriteDate = $product['write_date'] ?? null;
+            $erpIdCol     = ProductCache::erpIdColumn();
+            $existing     = ProductCache::where($erpIdCol, (string) $erpId)->first();
+            $erpWriteDate = $slim['write_date'] ?? null;
 
             if ($existing && $erpWriteDate && $existing->fetched_at) {
                 $fetchedAt    = \Carbon\Carbon::parse($existing->fetched_at);
@@ -67,12 +82,22 @@ class ProductCacheService
             }
         }
 
-        return $this->cacheProduct($product);
+        $fullProduct = method_exists($this->erp, 'getProductByIdFull')
+            ? ($this->erp->getProductByIdFull($erpId) ?? $slim)
+            : $slim;
+
+        return $this->cacheProduct($fullProduct);
     }
 
     public function cacheProduct(array $template): ProductCache
     {
-        $erpId = (int) $template['id'];
+        $erpId = $this->normalizeErpId($template['id'] ?? '');
+
+        if ($erpId === 0 || $erpId === '0') {
+            throw new \RuntimeException(
+                'Product template missing ERP id — check field configs and ERP product fetch.'
+            );
+        }
 
         $variants = $this->erp->getVariantsForProducts([$erpId]);
 
@@ -84,6 +109,10 @@ class ProductCacheService
         $attributeValues = $avIds
             ? $this->erp->getAttributeValues(array_unique($avIds))
             : [];
+			
+		$vendors = method_exists($this->erp, 'getVendorsForTemplate')
+			? $this->erp->getVendorsForTemplate(is_int($erpId) ? $erpId : 0)
+			: [];
 
         $data = [
             'fetched_at'       => now()->toISOString(),
@@ -91,68 +120,60 @@ class ProductCacheService
             'odoo_id'          => $erpId,
             'template'         => $template,
             'variants'         => $variants,
+            'vendors'          => $vendors,
             'attribute_values' => $attributeValues,
         ];
 
-        $filePath = self::BASE_DIR . "/{$erpId}.json";
+        $filePath = self::BASE_DIR . '/' . $this->cacheFileKey($erpId) . '.json';
         Storage::disk(self::DISK)->put($filePath, json_encode($data, JSON_PRETTY_PRINT));
 
-        $categoryName = '';
-        if (!empty($template['categ_id']) && is_array($template['categ_id'])) {
-            $categoryName = $template['categ_id'][1] ?? '';
-        }
+        $display = app(FieldMappingService::class)->extractProductCacheDisplay($template, $variants);
 
         $erpIdCol = ProductCache::hasEcomColumns() ? 'erp_id' : 'odoo_id';
+        $lookupId = (string) $erpId;
 
-        // When re-fetching a product that was already pushed (sent/skipped), reset its
-        // ecom status back to 'pending' so the Push button picks it up for re-push.
-        // New products (no existing row) have null status and are already picked up.
-        $existing    = ProductCache::where($erpIdCol, $erpId)->first();
-        $resetStatus = $existing && in_array(
-            $existing->ecom_status,
-            [ProductCache::STATUS_SENT, ProductCache::STATUS_SKIPPED],
-            true
-        );
+        $existing = ProductCache::where($erpIdCol, $lookupId)->first();
 
         $updatePayload = [
-            'odoo_id'       => $erpId,
-            'erp_id'        => $erpId,
-            'name'          => $template['name'],
-            'default_code'  => $template['default_code'] ?: null,
-            'barcode'       => $template['barcode'] ?: null,
-            'product_type'  => $template['type'] ?? null,
-            'is_active'     => (bool) ($template['active'] ?? true),
-            'price'         => $template['list_price'] ?? null,
-            'cost'          => $template['standard_price'] ?? null,
-            'weight'        => $template['weight'] ?? null,
-            'category'      => $categoryName ?: null,
+            'odoo_id'       => $lookupId,
+            'erp_id'        => $lookupId,
+            'name'          => $display['name'],
+            'default_code'  => $display['default_code'],
+            'barcode'       => $display['barcode'],
+            'product_type'  => $display['product_type'],
+            'is_active'     => $display['is_active'],
+            'price'         => $display['price'],
+            'cost'          => $display['cost'],
+            'weight'        => $display['weight'],
+            'category'      => $display['category'],
             'variant_count' => count($variants),
             'raw_data'      => $data,
             'file_path'     => $filePath,
             'fetched_at'    => now(),
         ];
 
-        if ($resetStatus) {
-            $updatePayload['ecom_status']     = ProductCache::STATUS_PENDING;
-            $updatePayload['shopify_status']  = ProductCache::STATUS_PENDING;
-            $updatePayload['ecom_message']    = null;
-            $updatePayload['shopify_message'] = null;
-            Log::info("ProductCacheService: #{$erpId} was '{$existing->ecom_status}' — reset to pending for re-push.");
+        $updatePayload['ecom_status']     = $existing ? ProductCache::STATUS_UPDATED : ProductCache::STATUS_PENDING;
+        $updatePayload['shopify_status']  = $updatePayload['ecom_status'];
+        $updatePayload['ecom_message']    = null;
+        $updatePayload['shopify_message'] = null;
+
+        if ($existing) {
+            Log::info("ProductCacheService: #{$erpId} re-fetched — marked updated.");
         }
 
-        $cache = ProductCache::updateOrCreate([$erpIdCol => $erpId], $updatePayload);
+        $cache = ProductCache::updateOrCreate([$erpIdCol => $lookupId], $updatePayload);
 
-        Log::info("ProductCacheService [{$this->erp->driverName()}]: cached #{$erpId} ({$template['name']})");
+        Log::info("ProductCacheService [{$this->erp->driverName()}]: cached #{$erpId} ({$display['name']})");
 
         return $cache;
     }
 
     // ── Read ──────────────────────────────────────────────────────────────
 
-    public function read(int $erpId): ?array
+    public function read(int|string $erpId): ?array
     {
         $col   = ProductCache::erpIdColumn();
-        $cache = ProductCache::where($col, $erpId)->first();
+        $cache = ProductCache::where($col, (string) $erpId)->first();
 
         if (!$cache || !$cache->cacheExists()) {
             return null;
@@ -161,7 +182,7 @@ class ProductCacheService
         return $cache->readCache();
     }
 
-    public function readOrFail(int $erpId): array
+    public function readOrFail(int|string $erpId): array
     {
         $data = $this->read($erpId);
 
@@ -175,64 +196,83 @@ class ProductCacheService
 
     // ── Status updates ────────────────────────────────────────────────────
 
-    public function markEcomSent(int $erpId, string $ecomProductId): void
+    public function markEcomSent(int|string $erpId, string $ecomProductId): void
     {
         $col = ProductCache::erpIdColumn();
-        ProductCache::where($col, $erpId)->update([
+        $key = (string) $erpId;
+
+        ProductCache::where($col, $key)->update([
             'ecom_status'        => ProductCache::STATUS_SENT,
             'ecom_product_id'    => $ecomProductId,
             'ecom_message'       => null,
             'ecom_synced_at'     => now(),
             'shopify_status'     => ProductCache::STATUS_SENT,
             'shopify_product_id' => $ecomProductId,
+            'shopify_message'    => null,
             'shopify_synced_at'  => now(),
         ]);
+
+        $settings = app(SettingsService::class);
+        SyncMapping::updateOrCreate(
+            ['entity_type' => 'product', 'erp_id' => $key],
+            [
+                'ecom_id'             => $ecomProductId,
+                'ecom_driver'         => $settings->ecomDriver(),
+                'erp_driver'          => $settings->erpDriver(),
+                'last_sync_direction' => 'erp_to_ecom',
+                'last_synced_at'      => now(),
+            ]
+        );
     }
 
-    public function markEcomFailed(int $erpId, string $message): void
+    public function markEcomFailed(int|string $erpId, string $message): void
     {
         $col = ProductCache::erpIdColumn();
-        ProductCache::where($col, $erpId)->update([
-            'ecom_status'    => ProductCache::STATUS_FAILED,
-            'ecom_message'   => $message,
-            'shopify_status' => ProductCache::STATUS_FAILED,
-            'shopify_message'=> $message,
+        $truncated = strlen($message) > 2000 ? substr($message, 0, 2000) . '…' : $message;
+
+        ProductCache::where($col, (string) $erpId)->update([
+            'ecom_status'     => ProductCache::STATUS_PENDING,
+            'ecom_message'    => $truncated,
+            'shopify_status'  => ProductCache::STATUS_PENDING,
+            'shopify_message' => $truncated,
         ]);
     }
 
-    public function markShopifySent(int $erpId, string $shopifyProductId): void
+    public function markShopifySent(int|string $erpId, string $shopifyProductId): void
     {
         $this->markEcomSent($erpId, $shopifyProductId);
     }
 
-    public function markShopifyFailed(int $erpId, string $message): void
+    public function markShopifyFailed(int|string $erpId, string $message): void
     {
         $this->markEcomFailed($erpId, $message);
     }
 
-    public function markAmazonSent(int $erpId, string $message = ''): void
+    public function markAmazonSent(int|string $erpId, string $message = ''): void
     {
         $col = ProductCache::erpIdColumn();
-        ProductCache::where($col, $erpId)->orWhere('odoo_id', $erpId)->update([
+        $key = (string) $erpId;
+        ProductCache::where($col, $key)->orWhere('odoo_id', $key)->update([
             'amazon_status'    => ProductCache::STATUS_SENT,
             'amazon_message'   => $message,
             'amazon_synced_at' => now(),
         ]);
     }
 
-    public function markAmazonFailed(int $erpId, string $message): void
+    public function markAmazonFailed(int|string $erpId, string $message): void
     {
         $col = ProductCache::erpIdColumn();
-        ProductCache::where($col, $erpId)->orWhere('odoo_id', $erpId)->update([
+        $key = (string) $erpId;
+        ProductCache::where($col, $key)->orWhere('odoo_id', $key)->update([
             'amazon_status'  => ProductCache::STATUS_FAILED,
             'amazon_message' => $message,
         ]);
     }
 
-    public function clearCache(int $erpId): void
+    public function clearCache(int|string $erpId): void
     {
         $col   = ProductCache::erpIdColumn();
-        $cache = ProductCache::where($col, $erpId)->first();
+        $cache = ProductCache::where($col, (string) $erpId)->first();
         if ($cache) {
             if ($cache->file_path) {
                 Storage::disk(self::DISK)->delete($cache->file_path);

@@ -32,10 +32,13 @@ class OdooService
      */
     private array $retryDelays;
 
+    /** @var array<int, array<string, mixed>> Captured RPC calls for sync detail pages */
+    private array $wireLog = [];
+
     public function __construct()
     {
         $settings       = app(\App\Services\SettingsService::class);
-        $this->url      = rtrim($settings->odooUrl() ?: config('odoo.url'), '/');
+        $this->url      = $this->normalizeOdooBaseUrl($settings->odooUrl() ?: config('odoo.url', ''));
         $this->db       = $settings->odooDb() ?: config('odoo.db');
         $this->username = $settings->odooUsername() ?: config('odoo.username');
         $this->apiKey   = $settings->odooApiKey() ?: config('odoo.api_key');
@@ -47,6 +50,66 @@ class OdooService
         $this->retryDelays = array_map('intval', explode(',', $raw));
     }
 
+    /**
+     * Normalize the configured Odoo base URL.
+     * Odoo SaaS / Odoo.sh reject plain HTTP with a 303 redirect to HTTPS, which
+     * breaks XML-RPC clients that expect a 200 response body.
+     */
+    private function normalizeOdooBaseUrl(string $url): string
+    {
+        $url = trim($url);
+        if ($url === '') {
+            return '';
+        }
+
+        // Strip browser UI paths — not the Odoo install root (e.g. keep https://host/odoo).
+        $url = preg_replace('#/web(/.*)?$#', '', rtrim($url, '/')) ?? rtrim($url, '/');
+        // Common mistake: pasting the Laravel connector URL (.../public).
+        $url = preg_replace('#/public/?$#', '', $url) ?? $url;
+
+        $parsed = parse_url($url);
+        if (!$parsed || empty($parsed['host'])) {
+            return rtrim($url, '/');
+        }
+
+        $host   = strtolower($parsed['host']);
+        $scheme = strtolower($parsed['scheme'] ?? 'https');
+        $port   = isset($parsed['port']) ? ':' . $parsed['port'] : '';
+        $path   = isset($parsed['path']) ? rtrim($parsed['path'], '/') : '';
+
+        if ($scheme === 'http' && $this->hostRequiresHttps($host)) {
+            $scheme = 'https';
+            Log::info('OdooService: upgraded HTTP to HTTPS for Odoo cloud host', ['host' => $host]);
+        }
+
+        $normalized = "{$scheme}://{$host}{$port}{$path}";
+
+        if (str_contains($path, 'public') || str_contains($path, 'dashboard')) {
+            Log::warning('OdooService: ERP URL looks like the connector app, not Odoo', [
+                'url' => $normalized,
+                'hint' => 'Settings → Odoo URL must be your Odoo server (e.g. https://mycompany.odoo.com), not this Laravel app URL.',
+            ]);
+        }
+
+        return $normalized;
+    }
+
+    private function hostRequiresHttps(string $host): bool
+    {
+        return str_ends_with($host, '.odoo.com')
+            || str_ends_with($host, '.odoo.sh')
+            || $host === 'odoo.com';
+    }
+
+    private function configureClient(Client $client): void
+    {
+        $client->setSSLVerifyPeer(true);
+        $client->setCurlOptions([
+            CURLOPT_TIMEOUT        => $this->timeout,
+            CURLOPT_CONNECTTIMEOUT => min(10, $this->timeout),
+        ]);
+    }
+
     // ── Authentication ────────────────────────────────────────────────────
 
     /**
@@ -55,23 +118,26 @@ class OdooService
      */
     public function authenticate(): int
     {
-        $client = new Client($this->url . '/xmlrpc/2/common');
-
-        $request = new Request('authenticate', [
-            new Value($this->db,       'string'),
-            new Value($this->username, 'string'),
-            new Value($this->apiKey,   'string'),
-            new Value([],              'struct'),
-        ]);
-
-        $response = $this->sendWithRetry($client, $request, '/xmlrpc/2/common');
+        $response = $this->sendAuthenticateRequest();
 
         if ($response->faultCode()) {
-            throw new OdooApiException(
-                'Odoo authentication fault: ' . $response->faultString(),
-                $response->faultCode(),
-                '/xmlrpc/2/common'
-            );
+            $faultString = $response->faultString();
+
+            if ($this->faultStringIsRedirect($faultString) && str_starts_with($this->url, 'http://')) {
+                $this->url = 'https://' . substr($this->url, 7);
+                Cache::forget('odoo_uid');
+                Log::info('OdooService: retrying authentication over HTTPS after redirect', ['url' => $this->url]);
+                $response = $this->sendAuthenticateRequest();
+                $faultString = $response->faultString();
+            }
+
+            if ($response->faultCode()) {
+                throw new OdooApiException(
+                    $this->formatAuthFaultMessage($faultString),
+                    $response->faultCode(),
+                    '/xmlrpc/2/common'
+                );
+            }
         }
 
         $uid = $response->value()->scalarval();
@@ -86,9 +152,36 @@ class OdooService
 
         $uid = (int) $uid;
 
-        Log::info('Odoo authenticated', ['uid' => $uid]);
+        Log::info('Odoo authenticated', ['uid' => $uid, 'url' => $this->url]);
 
         return $uid;
+    }
+
+    private function sendAuthenticateRequest(): \PhpXmlRpc\Response
+    {
+        $client = new Client($this->url . '/xmlrpc/2/common');
+        $this->configureClient($client);
+
+        $request = new Request('authenticate', [
+            new Value($this->db,       'string'),
+            new Value($this->username, 'string'),
+            new Value($this->apiKey,   'string'),
+            new Value([],              'struct'),
+        ]);
+
+        return $this->sendWithRetry($client, $request, '/xmlrpc/2/common');
+    }
+
+    private function formatAuthFaultMessage(string $faultString): string
+    {
+        if ($this->faultStringIsRedirect($faultString)) {
+            return 'Odoo authentication fault: the ERP URL redirected instead of responding to XML-RPC (HTTP 303). '
+                . 'In Settings → Odoo, use your Odoo server base URL only (e.g. https://yourcompany.odoo.com) — '
+                . 'no /web, no /public, and not http://. '
+                . 'Do not use this connector app URL. Attempted: ' . $this->url;
+        }
+
+        return 'Odoo authentication fault: ' . $faultString;
     }
 
     private function getUid(): int
@@ -168,8 +261,7 @@ class OdooService
         }
 
         $client = new Client($this->url . '/xmlrpc/2/object');
-        $client->setSSLVerifyPeer(true);
-        $client->setCurlOptions([CURLOPT_TIMEOUT => $this->timeout]);
+        $this->configureClient($client);
 
         $request = new Request('execute_kw', [
             new Value($this->db,     'string'),
@@ -184,14 +276,51 @@ class OdooService
         $response = $this->sendWithRetry($client, $request, '/xmlrpc/2/object');
 
         if ($response->faultCode()) {
+            $faultString = $response->faultString();
+            $fullMessage = "Odoo {$model}.{$method} failed: " . $faultString;
+
+            Log::warning('OdooService RPC fault', [
+                'model'  => $model,
+                'method' => $method,
+                'fault'  => strlen($faultString) > 2000 ? substr($faultString, 0, 2000) . '…' : $faultString,
+            ]);
+
             throw new OdooApiException(
-                "Odoo {$model}.{$method} failed: " . $response->faultString(),
+                $fullMessage,
                 $response->faultCode(),
                 '/xmlrpc/2/object'
             );
         }
 
-        return $this->encoder->decode($response->value());
+        $result = $this->encoder->decode($response->value());
+        $this->recordWireCall($model, $method, $args, $kwargs, $result);
+
+        return $result;
+    }
+
+    /**
+     * Return captured Odoo XML-RPC calls since the last takeWireLog() and clear the buffer.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function takeWireLog(): array
+    {
+        $log           = $this->wireLog;
+        $this->wireLog = [];
+
+        return $log;
+    }
+
+    private function recordWireCall(string $model, string $method, array $args, array $kwargs, mixed $result): void
+    {
+        $this->wireLog[] = [
+            'endpoint' => $this->url . '/xmlrpc/2/object',
+            'model'    => $model,
+            'method'   => $method,
+            'args'     => $args,
+            'kwargs'   => $kwargs,
+            'result'   => $result,
+        ];
     }
 
     // ── Low-level HTTP send with 429-aware retry ──────────────────────────
@@ -258,10 +387,39 @@ class OdooService
      */
     private function isNonRetryable(\Throwable $e): bool
     {
-        $msg = $e->getMessage();
+        return $this->isNonRetryableMessage($e->getMessage());
+    }
+
+    private function isNonRetryableMessage(string $msg): bool
+    {
+        $lower = strtolower($msg);
+
         return str_contains($msg, 'cannot marshal None')
             || str_contains($msg, 'allow_none is enabled')
-            || str_contains($msg, 'Quants cannot be created for consumables or services');
+            || str_contains($msg, 'Quants cannot be created for consumables or services')
+            || str_contains($msg, 'Record does not exist or has been deleted')
+            || str_contains($msg, 'Invalid field')
+            || str_contains($msg, 'Invalid ERP field')
+            || str_contains($msg, 'ValueError:')
+            || str_contains($msg, 'UserError:')
+            || str_contains($msg, 'ValidationError')
+            || str_contains($msg, 'AccessError:')
+            || str_contains($msg, 'KeyError:')
+            || str_contains($msg, 'Traceback')
+            || str_contains($msg, 'Wrong value for')
+            || str_contains($msg, 'invalid input syntax for type integer')
+            || str_contains($msg, 'InvalidTextRepresentation')
+            || str_contains($msg, '.write failed:')
+            || str_contains($msg, '.create failed:')
+            || str_contains($msg, '.unlink failed:')
+            || str_contains($msg, 'The operation cannot be completed')
+            || str_contains($msg, 'foreign key constraint')
+            || str_contains($msg, 'violates RESTRICT')
+            || str_contains($msg, 'MissingError')
+            || str_contains($lower, 'integrityerror')
+            || str_contains($lower, 'still linked')
+            || str_contains($lower, 'cannot be deleted')
+            || str_contains($lower, 'linked to');
     }
 
     private function faultStringIs429(string $text): bool
@@ -269,6 +427,14 @@ class OdooService
         return str_contains($text, '429')
             || str_contains(strtolower($text), 'too many requests')
             || str_contains(strtolower($text), 'rate limit');
+    }
+
+    private function faultStringIsRedirect(string $text): bool
+    {
+        return str_contains($text, '303')
+            || str_contains($text, '302')
+            || str_contains($text, '301')
+            || str_contains(strtolower($text), 'redirect');
     }
 
     // ── Convenience wrappers (unchanged public API) ───────────────────────
@@ -319,6 +485,11 @@ class OdooService
     public function clearSession(): void
     {
         Cache::forget('odoo_uid');
+    }
+
+    public function getBaseUrl(): string
+    {
+        return $this->url;
     }
 
     // ── Private (unchanged) ───────────────────────────────────────────────

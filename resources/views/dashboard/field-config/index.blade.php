@@ -409,6 +409,10 @@ function fieldConfigApp() {
             min_length: '', max_length: '',
             sort_order: 0, is_active: true,
         },
+		
+		baseUrl: '{{ url('dashboard/field-config') }}',
+		
+		console.log(baseUrl);
 
         ecomFields: @json(array_merge($ecomFields['template_fields'] ?? $ecomFields['fields'] ?? [], $ecomFields['variant_fields'] ?? [])),
         erpFields:  @json($erpFields['fields'] ?? array_merge($erpFields['template_fields'] ?? [], $erpFields['variant_fields'] ?? [])),
@@ -429,7 +433,7 @@ function fieldConfigApp() {
                 sort_order: 0, is_active: true,
             };
             this.$nextTick(() => {
-                this.$refs.form.action = '/dashboard/field-config/' + this.entityType;
+                this.$refs.form.action = this.baseUrl + '/' + this.entityType;
                 this.$refs.method.value = 'POST';
             });
             this.showModal = true;
@@ -455,7 +459,7 @@ function fieldConfigApp() {
                 is_active:         config.is_active,
             };
             this.$nextTick(() => {
-                this.$refs.form.action = '/dashboard/field-config/' + this.entityType + '/' + config.id;
+                this.$refs.form.action = this.baseUrl + '/' + this.entityType + '/' + config.id;
                 this.$refs.method.value = 'PUT';
             });
             this.showModal = true;

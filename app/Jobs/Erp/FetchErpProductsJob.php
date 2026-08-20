@@ -3,7 +3,7 @@
 namespace App\Jobs\Erp;
 
 use App\Jobs\Amazon\PushProductToAmazonJob;
-use App\Models\SyncQueueState;
+use App\Support\ErpId;
 use App\Services\Erp\ErpInterface;
 use App\Services\ProductCacheService;
 use App\Services\SettingsService;
@@ -100,7 +100,7 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
             }
 
             if ($this->autoPush) {
-                $this->dispatchPushJobs((int) $product['id'], $settings);
+                $this->dispatchPushJobs(ErpId::normalize($product['id']), $settings);
             }
 
             if (($product['write_date'] ?? '') > $latestWriteDate) {
@@ -141,7 +141,7 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
                 }
 
                 if ($this->autoPush) {
-                    $this->dispatchPushJobs((int) $product['id'], $settings);
+                    $this->dispatchPushJobs(ErpId::normalize($product['id']), $settings);
                 }
 
                 if (($product['write_date'] ?? '') > $latestWriteDate) {
@@ -163,15 +163,21 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
     private function handleManual(array $erpIds, ProductCacheService $cache, SettingsService $settings): void
     {
         foreach ($erpIds as $erpId) {
-            $data = $cache->read((int) $erpId);
+            $id = ErpId::normalize($erpId);
+
+            if ($id === 0 || $id === '0') {
+                continue;
+            }
+
+            $data = $cache->read($id);
 
             if (!$data) {
                 Log::info("FetchErpProductsJob: no cache for #{$erpId}, fetching from ERP.");
-                $cache->fetchAndCacheSingle((int) $erpId);
+                $cache->fetchAndCacheSingle($id);
             }
 
             if ($this->autoPush) {
-                $this->dispatchPushJobs((int) $erpId, $settings);
+                $this->dispatchPushJobs($id, $settings);
             }
         }
 
@@ -180,8 +186,11 @@ class FetchErpProductsJob implements ShouldQueue, ShouldBeUnique
 
     // Push destination resolved from the connector registry for the active
     // ecom driver — see config/connectors.php. Amazon is a secondary channel.
-    private function dispatchPushJobs(int $erpId, SettingsService $settings): void
+    private function dispatchPushJobs(int|string $erpId, SettingsService $settings): void
     {
+        if ($erpId === 0 || $erpId === '0' || $erpId === '') {
+            return;
+        }
         $registry = app(\App\Services\ConnectorRegistry::class);
         $pushJob  = $registry->job($settings->ecomDriver(), 'push_product');
 

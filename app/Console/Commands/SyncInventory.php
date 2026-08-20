@@ -2,59 +2,41 @@
 
 namespace App\Console\Commands;
 
-use App\Jobs\Erp\FetchErpInventoryJob;
-use App\Models\SyncQueueState;
-use App\Services\SettingsService;
+use App\Services\Sync\ScheduledSyncRunner;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 class SyncInventory extends Command
 {
     protected $signature = 'sync:inventory
-                            {--location= : ERP location ID to filter}
-                            {--full : Reset cursor and sync all inventory}
-                            {--dry-run : Print quants without syncing}
-                            {--force : Run even when inventory sync is disabled}';
+                            {--dry-run : Print without syncing}
+                            {--force   : Ignored — kept for backward compatibility}';
 
-    protected $description = 'Sync ERP inventory to ecommerce platform';
+    protected $description = 'Sync inventory (fetch + post) using dashboard UI logic and global settings.';
 
-    public function handle(SettingsService $settings): int
+    public function handle(ScheduledSyncRunner $runner): int
     {
-        // FIX #14: check enable flag
-        if (!$settings->isInventorySyncEnabled() && !$this->option('force')) {
-            $this->warn('Inventory sync is DISABLED in settings (inventory_sync_enabled = off).');
-            $this->line('  Run with <comment>--force</comment> to override.');
+        if ($this->option('dry-run')) {
+            $this->info('Dry run — would run inventory fetchStock + postStock per inventory_sync_mode.');
+
             return self::SUCCESS;
         }
 
-        $locationId = $this->option('location') ? (int) $this->option('location') : null;
-        $full       = $this->option('full');
-        $dryRun     = $this->option('dry-run');
+        $result = $runner->runInventory();
+        $this->outputResult('inventory', $result);
 
-        $this->info('Starting inventory sync...' . ($dryRun ? ' [DRY RUN]' : ''));
+        return ($result['level'] ?? '') === 'error' ? self::FAILURE : self::SUCCESS;
+    }
 
-        if ($dryRun) {
-            $mode = $settings->inventorySyncMode();
-            $this->warn("Dry-run: would sync inventory in '{$mode}' mode.");
-            return self::SUCCESS;
-        }
+    private function outputResult(string $entity, array $result): void
+    {
+        $level   = $result['level'] ?? 'info';
+        $message = $result['message'] ?? '';
 
-        if ($full) {
-            // FIX: correct column name
-            SyncQueueState::forType('inventory')->update([
-                'last_erp_write_date' => null,
-                'is_running'          => false,
-            ]);
-        }
-
-        FetchErpInventoryJob::dispatchSync($locationId);
-
-        try {
-            $queued = DB::table('jobs')->where('queue', 'sync')->count();
-            $this->line("Queued jobs on 'sync': {$queued}.");
-        } catch (\Throwable) {}
-
-        $this->info('Inventory sync job completed.');
-        return self::SUCCESS;
+        match ($level) {
+            'error'   => $this->error("[{$entity}] {$message}"),
+            'warning' => $this->warn("[{$entity}] {$message}"),
+            'skipped' => $this->line("[{$entity}] skipped — {$message}"),
+            default   => $this->info("[{$entity}] {$message}"),
+        };
     }
 }
